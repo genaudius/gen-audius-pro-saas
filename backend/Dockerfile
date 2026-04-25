@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libmagic1 \
     git \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements or just the code since we'll install manually for now 
