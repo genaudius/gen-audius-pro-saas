@@ -1,0 +1,14 @@
+name: "MODAL"
+display_name: "Gen Audius Serverless (Modal)"
+priority: 5
+enabled: true
+cost_per_gen: 5
+timeout: 120
+connection:
+  base_url: "https://dagrabastudio--gen-audius-master-studio-orchestrator.modal.run"
+  api_key_env: "MODAL_API_KEY"
+health:
+  penalty_on_fail: 10
+  recovery_on_success: 10
+endpoints:
+  generate: "/v1/generate"

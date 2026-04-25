@@ -1,0 +1,15 @@
+name: "GAU"
+display_name: "GenAudius (GAU) Finetune"
+priority: 4
+enabled: true
+cost_per_gen: 12
+timeout: 900
+connection:
+  # GAU runs via Modal CLI locally; api_key is not required for availability.
+  api_key_env: "MODAL_API_KEY"
+health:
+  penalty_on_fail: 10
+  recovery_on_success: 10
+endpoints:
+  generate: "modal_cli"
+

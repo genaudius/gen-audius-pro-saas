@@ -1,0 +1,22 @@
+// Extracted Design Tokens from V3
+export const C = {
+  bg:      "#0D0D12",
+  surf:    "#14141C",
+  card:    "#1A1A24",
+  cardHov: "#1F1F2C",
+  input:   "#111118",
+  border:  "#242433",
+  div:     "#1C1C28",
+  a:       "#7B5CFA",
+  aDk:     "#5A3DD4",
+  aLt:     "#A088FF",
+  aBg:     "#7B5CFA12",
+  aBd:     "#7B5CFA30",
+  t1:      "#EBEBF5",
+  t2:      "#8888A8",
+  t3:      "#4E4E6A",
+  ok:      "#2ECC8F",
+  okBg:    "#2ECC8F12",
+  err:     "#E06060",
+  warn:    "#D4963A",
+};

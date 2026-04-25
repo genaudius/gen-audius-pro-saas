@@ -1,0 +1,12 @@
+name: KIE
+display_name: "Kie.ai x Suno"
+priority: 99
+enabled: false
+cost_per_gen: 5
+timeout: 30
+connection:
+  base_url: "https://api.kie.ai"
+  api_key_env: KIE_API_KEY
+endpoints:
+  generate: "/api/v1/generate"
+  feed:     "/api/v1/generate/record-info"

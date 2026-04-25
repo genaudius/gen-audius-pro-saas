@@ -1,0 +1,8 @@
+name: LOCAL-DNA
+display_name: "Local DNA Engine"
+priority: 99
+enabled: false
+cost_per_gen: 0
+timeout: 60
+connection:
+  base_url: "http://localhost:8001"

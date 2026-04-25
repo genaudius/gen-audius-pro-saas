@@ -1,0 +1,74 @@
+# ─── Dependencies ────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+backend/venv/
+backend/venv_new/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# ─── Environment / Secrets ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+# Allow only the example template
+!.env.example
+
+# ─── Build Outputs ───────────────────────────────────────────────────────────
+frontend/.next/
+frontend/dist/
+frontend/build/
+gen-studio/node_modules/
+
+# ─── Media / Binary Files (too large for Git) ─────────────────────────────────
+*.wav
+*.mp3
+*.mp4
+*.aac
+*.ogg
+*.flac
+*.aiff
+*.pb
+
+# ─── IDE / OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Testing ──────────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+htmlcov/
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+*.pem
+.vercel
+.netlify

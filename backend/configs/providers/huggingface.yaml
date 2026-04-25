@@ -1,0 +1,14 @@
+name: "huggingface"
+display_name: "Hugging Face Router (Llama 3.1)"
+priority: 1
+enabled: true
+cost_per_gen: 0
+timeout: 120
+connection:
+  base_url: "https://router.huggingface.co/v1"
+  api_key_env: "HF_API_KEY"
+endpoints:
+  lyrics: "/chat/completions"
+health:
+  penalty_on_fail: 10
+  recovery_on_success: 5

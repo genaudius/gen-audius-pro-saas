@@ -1,0 +1,9 @@
+name: MUREKA
+display_name: "Mureka AI"
+priority: 99
+enabled: false
+cost_per_gen: 5
+timeout: 30
+connection:
+  base_url: "https://api.mureka.ai"
+  api_key_env: MUREKA_API_KEY

@@ -1,0 +1,33 @@
+# Python ignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Large Audio/Data (Avoid copying into the container image if not strictly needed for runtime)
+Bolero_ADN/
+GEN_AUDIUS_DNA_VAULT/
+legacy_v1_audio_engine/
+models/
+pro_tools_exports/
+VOZ_M/
+VOZ_F/
+GEN_AUDIUS_DNA_MIDI_ADN/
+GEN_AUDIUS_ARREGLOS_COMPLETOS/
+GEN_AUDIUS_COMPOSICIONES_ORIGINALES/
+
+# Docker/System
+.git
+.github
+.vscode
+.env
+.env.*
+Dockerfile
+docker-compose.yml
+README.md
+*.log
