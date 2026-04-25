@@ -1,0 +1,52 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: genaudius-backend
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://genuser:genpass@postgres:5432/genaudius
+      - MONGO_URL=mongodb://mongo:27017/genaudius_mcp_memory
+      - REDIS_URL=redis://redis:6379/0
+      - MODAL_AUDIO_URL=${MODAL_AUDIO_URL}
+      - GENAUDIUS_API_KEY=${GENAUDIUS_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - mongo
+      - redis
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: genaudius-db
+    restart: always
+    environment:
+      - POSTGRES_USER=genuser
+      - POSTGRES_PASSWORD=genpass
+      - POSTGRES_DB=genaudius
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  mongo:
+    image: mongo:6.0
+    container_name: genaudius-mongo
+    restart: always
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+
+  redis:
+    image: redis:7-alpine
+    container_name: genaudius-redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
+  mongo_data:
