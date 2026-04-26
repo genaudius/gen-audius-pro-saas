@@ -11,7 +11,7 @@ RUN npm install
 COPY . .
 
 # Set the production API URL
-ENV VITE_API_URL=https://genaudius.com
+ENV VITE_API_URL=/api
 
 # Build the application
 RUN npm run build
