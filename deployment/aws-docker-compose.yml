@@ -1,4 +1,13 @@
 services:
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: genaudius-frontend
+    restart: always
+    depends_on:
+      - backend
+
   backend:
     build:
       context: ../backend
@@ -9,7 +18,8 @@ services:
       - DATABASE_URL=postgresql://genuser:genpass@postgres:5432/genaudius
       - MONGO_URL=mongodb://mongo:27017/genaudius_mcp_memory
       - REDIS_URL=redis://redis:6379/0
-      - MODAL_AUDIO_URL=${MODAL_AUDIO_URL}
+      - MODAL_API_KEY=${MODAL_API_KEY}
+      - MODAL_API_URL=${MODAL_API_URL}
       - GENAUDIUS_API_KEY=${GENAUDIUS_API_KEY}
     ports:
       - "8000:8000"
@@ -46,6 +56,16 @@ services:
     restart: always
     ports:
       - "6379:6379"
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-tunnel
+    restart: always
+    command: tunnel run --url http://frontend:80
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on:
+      - frontend
 
 volumes:
   postgres_data:
