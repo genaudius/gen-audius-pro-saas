@@ -1369,7 +1369,24 @@ async def generate_music(
         wallet.credits += cost
         wallet.updated_at = datetime.utcnow()
         db.commit()
-        raise HTTPException(status_code=500, detail="Error generating music. Todos los proveedores fallaron.")
+
+        # Propagar el último error y la lista de providers intentados.
+        # `result` aquí es el último resultado del bucle (sea de un provider directo
+        # o del execute_with_failover) y debería traer last_error / tried.
+        last_error    = (result or {}).get("last_error") or (result or {}).get("error")
+        tried         = (result or {}).get("tried", [])
+        last_provider = (result or {}).get("last_provider")
+        detail = {
+            "message":       "Error generating music. Todos los proveedores fallaron.",
+            "last_error":    last_error,
+            "last_provider": last_provider,
+            "tried":         tried,
+        }
+        logger.error(
+            f"❌ [GENERATE] All providers failed | tried={tried} | "
+            f"last_provider={last_provider} | last_error={last_error}"
+        )
+        raise HTTPException(status_code=500, detail=detail)
 
     db.commit()
     logger.info(

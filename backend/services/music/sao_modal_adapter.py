@@ -101,10 +101,28 @@ class SaoModalAdapter(MusicProvider):
         ]
 
         logger.info(f"🎛️ [SAO] Generating via Modal (out_dir={out_dir})")
-        r = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
+        except FileNotFoundError:
+            # `modal` CLI no instalado en el host (típico en producción AWS sin tooling).
+            return {
+                "success": False,
+                "error": (
+                    "modal CLI not available on host. Install Modal CLI and run "
+                    "`modal token new` (or skip GAU and rely on the MODAL HTTP provider)."
+                ),
+            }
+        except Exception as e:
+            logger.error(f"❌ [SAO] subprocess.run raised: {e}")
+            return {"success": False, "error": f"SAO subprocess error: {e}"}
+
         if r.returncode != 0:
-            logger.error(f"❌ [SAO] modal run failed: {r.stderr.strip()}")
-            return {"success": False, "error": "SAO Modal generation failed. Check backend logs."}
+            stderr = (r.stderr or "").strip()[:400]
+            logger.error(f"❌ [SAO] modal run failed: {stderr}")
+            return {
+                "success": False,
+                "error": f"SAO Modal generation failed (rc={r.returncode}): {stderr or 'no stderr'}",
+            }
 
         # Parse the produced file path from stdout (the script prints a dict with 'files')
         stdout = r.stdout or ""

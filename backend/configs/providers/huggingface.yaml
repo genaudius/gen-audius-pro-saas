@@ -1,5 +1,9 @@
 name: "huggingface"
 display_name: "Hugging Face Router (Llama 3.1)"
+# kind=lyrics: este provider solo expone /chat/completions y NO genera audio.
+# Mantenerlo fuera de la cadena de música evita el bug
+# "Todos los proveedores fallaron" causado por su generate_music() que siempre falla.
+kind: lyrics
 priority: 1
 enabled: true
 cost_per_gen: 0

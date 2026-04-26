@@ -39,6 +39,13 @@ class ProviderConfig:
         self.enabled      = yaml_data.get("enabled", True)
         self.cost_per_gen = yaml_data.get("cost_per_gen", 5)
         self.timeout      = yaml_data.get("timeout", 30)
+        # "kind" determina en qué cadenas participa el provider:
+        #   - "music"  → cadena de generación de audio (default)
+        #   - "lyrics" → cadena de letras (HF llama)
+        #   - "both"   → ambas
+        # Esto evita que providers solo-letras como HuggingFace contaminen
+        # la cadena de música y gatillen "Todos los proveedores fallaron".
+        self.kind         = yaml_data.get("kind", "music")
         conn              = yaml_data.get("connection", {})
         self.base_url     = conn.get("base_url", "")
         self.endpoints    = yaml_data.get("endpoints", {})
@@ -100,7 +107,15 @@ class ProviderManager:
             elif name == "MUREKA":
                 self._adapters[p.name] = MurekaAdapter(api_key=p.api_key)
             elif name == "MODAL":
-                self._adapters[p.name] = ModalMusicAdapter(api_key=p.api_key, base_url=p.base_url)
+                # La env MODAL_API_URL tiene precedencia sobre el YAML para que
+                # un cambio de endpoint en producción no requiera redeploy del YAML.
+                modal_url = os.getenv("MODAL_API_URL", "") or p.base_url
+                if modal_url and modal_url != p.base_url:
+                    logger.info(
+                        f"[ProviderManager] MODAL base_url overridden by env: "
+                        f"{p.base_url} -> {modal_url}"
+                    )
+                self._adapters[p.name] = ModalMusicAdapter(api_key=p.api_key, base_url=modal_url)
             elif name in ("GAU", "GAD", "SAO", "SAO-MODAL", "STABLE-AUDIO"):
                 self._adapters[p.name] = SaoModalAdapter()
             elif name == "HUGGINGFACE":
@@ -185,8 +200,16 @@ class ProviderManager:
     # Consulta del estado
     # ──────────────────────────────────────────
 
-    def get_active_chain(self) -> List[ProviderConfig]:
-        return [p for p in self._providers if p.is_available]
+    def get_active_chain(self, kind: str = "music") -> List[ProviderConfig]:
+        """Devuelve la cadena activa filtrada por tipo (music | lyrics).
+
+        kind="music"  → providers con kind in ("music", "both")
+        kind="lyrics" → providers con kind in ("lyrics", "both")
+        """
+        return [
+            p for p in self._providers
+            if p.is_available and (p.kind == kind or p.kind == "both")
+        ]
 
     def get_all(self) -> List[ProviderConfig]:
         return self._providers
@@ -269,29 +292,36 @@ class ProviderManager:
     # Motor de Failover
     # ──────────────────────────────────────────
 
-    def execute_with_failover(self, task_fn, payload: dict) -> dict:
+    def execute_with_failover(self, task_fn, payload: dict, kind: str = "music") -> dict:
         """
-        Ejecuta task_fn(provider, payload) recorriendo la cadena de proveedores.
+        Ejecuta task_fn(provider, payload) recorriendo la cadena de proveedores
+        del tipo indicado (music | lyrics).
 
         task_fn debe tener la firma:
             task_fn(provider: ProviderConfig, payload: dict) -> dict
         y retornar {"success": True/False, ...}
 
-        Si todos los proveedores fallan, retorna un dict de error con detalles.
+        Si todos los proveedores fallan, retorna un dict de error con detalles
+        (incluye `last_error` y `tried` con la lista de providers intentados).
         """
-        chain = self.get_active_chain()
+        chain = self.get_active_chain(kind=kind)
 
         if not chain:
             return {
-                "success": False,
-                "error":   "No hay proveedores disponibles en la cadena de failover.",
-                "engine":  None,
+                "success":    False,
+                "error":      f"No hay proveedores disponibles en la cadena de failover ({kind}).",
+                "engine":     None,
+                "tried":      [],
+                "last_error": None,
             }
 
-        last_error       = None
+        last_error        = None
+        last_provider     = None
         previous_provider = None
+        tried: List[str]  = []
 
         for provider in chain:
+            tried.append(provider.name)
             try:
                 logger.info(f"[Failover] Trying: {provider.name}")
                 result = task_fn(provider, payload)
@@ -310,7 +340,8 @@ class ProviderManager:
                     if previous_provider:
                         self.mark_failover(previous_provider, provider.name, error_msg)
                     previous_provider = provider.name
-                    last_error = error_msg
+                    last_error        = error_msg
+                    last_provider     = provider.name
 
             except Exception as exc:
                 error_msg = str(exc)
@@ -319,12 +350,16 @@ class ProviderManager:
                     self.mark_failover(previous_provider, provider.name, error_msg)
                 previous_provider = provider.name
                 last_error        = error_msg
+                last_provider     = provider.name
                 logger.error(f"[Failover] {provider.name} threw exception: {error_msg}")
 
         return {
-            "success": False,
-            "error":   f"Todos los proveedores fallaron. Último error: {last_error}",
-            "engine":  None,
+            "success":       False,
+            "error":         f"Todos los proveedores fallaron. Último error: {last_error}",
+            "engine":        None,
+            "tried":         tried,
+            "last_provider": last_provider,
+            "last_error":    last_error,
         }
 
     # ──────────────────────────────────────────
