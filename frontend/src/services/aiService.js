@@ -16,8 +16,9 @@ const BACKEND_URL = '/api/backend';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function apiFetch(path, options = {}) {
+    const userId = localStorage.getItem('ga_user_id') || '';
     const res = await fetch(`${BACKEND_URL}${path}`, {
-        headers: { 'Content-Type': 'application/json', ...options.headers },
+        headers: { 'Content-Type': 'application/json', 'X-User-ID': userId, ...options.headers },
         ...options,
     });
     if (!res.ok) {
