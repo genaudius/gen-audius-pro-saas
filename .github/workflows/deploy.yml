@@ -18,5 +18,7 @@ jobs:
           script: |
             cd /home/ubuntu/gen-audius-pro-saas/deployment
             git -C /home/ubuntu/gen-audius-pro-saas pull origin main
-            docker-compose -f aws-docker-compose.yml up -d --build --remove-orphans
+            docker compose -f aws-docker-compose.yml build frontend backend
+            docker compose -f aws-docker-compose.yml up -d --no-recreate
+            docker compose -f aws-docker-compose.yml up -d frontend backend
             docker image prune -f
