@@ -2042,7 +2042,7 @@ class APIKeyCreateRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=100)
 
 @app.post("/api/admin/apikeys/generate", tags=["SaaS Admin"])
-async def generate_user_api_key(req: APIKeyCreateRequest, db: Session = Depends(get_db)):
+async def generate_user_api_key(req: APIKeyCreateRequest, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
     """Generate a new SaaS API Key and ensure the user has a wallet."""
     # 1. Asegurar que el usuario tenga una billetera (Wallet) para poder cobrarle
     existing_wallet = db.query(UserWallet).filter(UserWallet.user_id == req.user_id).first()
@@ -2073,7 +2073,7 @@ async def generate_user_api_key(req: APIKeyCreateRequest, db: Session = Depends(
     }
 
 @app.get("/api/admin/apikeys", tags=["SaaS Admin"])
-async def list_api_keys(db: Session = Depends(get_db)):
+async def list_api_keys(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
     """List all issued SaaS API keys."""
     keys = db.query(UserAPIKey).order_by(UserAPIKey.created_at.desc()).all()
     return [{
@@ -2087,7 +2087,7 @@ async def list_api_keys(db: Session = Depends(get_db)):
     } for k in keys]
 
 @app.post("/api/admin/apikeys/{key_id}/revoke", tags=["SaaS Admin"])
-async def revoke_api_key(key_id: int, db: Session = Depends(get_db)):
+async def revoke_api_key(key_id: int, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
     """Deactivate a SaaS API key."""
     key = db.query(UserAPIKey).filter(UserAPIKey.id == key_id).first()
     if not key:
