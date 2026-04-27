@@ -450,6 +450,7 @@ def _deduct_credits_atomic(db: Session, user_id: str, amount: int) -> UserWallet
     """
     Atomically deduct credits, raising 402 if insufficient.
     Uses SELECT FOR UPDATE to prevent race conditions.
+    Auto-provisions wallet with 100 credits if it doesn't exist.
     """
     wallet = (
         db.query(UserWallet)
@@ -458,7 +459,10 @@ def _deduct_credits_atomic(db: Session, user_id: str, amount: int) -> UserWallet
         .first()
     )
     if not wallet:
-        raise HTTPException(status_code=404, detail="Wallet not found")
+        wallet = UserWallet(user_id=user_id, credits=100, balance=10.0)
+        db.add(wallet)
+        db.commit()
+        db.refresh(wallet)
     if wallet.credits < amount:
         raise HTTPException(
             status_code=402,
