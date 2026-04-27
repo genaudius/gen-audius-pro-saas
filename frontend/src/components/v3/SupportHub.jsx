@@ -30,26 +30,28 @@ export default function SupportHub() {
     setLoading(true);
 
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
       const res = await fetch('/api/backend/api/support/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           message: userMsg,
           history: messages.slice(-6).map(m => ({ role: m.role, text: m.text }))
         })
       });
+      clearTimeout(timer);
 
       if (res.ok) {
         const data = await res.json();
         setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
       } else {
-        // Fallback local si el backend falla
-        const fallback = getLocalReply(userMsg);
-        setMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
+        setMessages(prev => [...prev, { role: 'assistant', text: getLocalReply(userMsg) }]);
       }
     } catch (err) {
-      const fallback = getLocalReply(userMsg);
-      setMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
+      setMessages(prev => [...prev, { role: 'assistant', text: getLocalReply(userMsg) }]);
     } finally {
       setLoading(false);
     }
