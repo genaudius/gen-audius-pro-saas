@@ -25,14 +25,15 @@ services:
     container_name: genaudius-backend
     restart: always
     environment:
-      - DATABASE_URL=postgresql://genuser:genpass@postgres:5432/genaudius
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-genuser}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-genaudius}
       - MONGO_URL=mongodb://mongo:27017/genaudius_mcp_memory
       - REDIS_URL=redis://redis:6379/0
       - MODAL_API_KEY=${MODAL_API_KEY}
       - MODAL_API_URL=${MODAL_API_URL}
       - GENAUDIUS_API_KEY=${GENAUDIUS_API_KEY}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       - postgres
       - mongo
@@ -43,13 +44,13 @@ services:
     container_name: genaudius-db
     restart: always
     environment:
-      - POSTGRES_USER=genuser
-      - POSTGRES_PASSWORD=genpass
-      - POSTGRES_DB=genaudius
+      - POSTGRES_USER=${POSTGRES_USER:-genuser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-genaudius}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   mongo:
     image: mongo:6.0
@@ -58,14 +59,14 @@ services:
     volumes:
       - mongo_data:/data/db
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
 
   redis:
     image: redis:7-alpine
     container_name: genaudius-redis
     restart: always
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
   tunnel:
     image: cloudflare/cloudflared:latest
