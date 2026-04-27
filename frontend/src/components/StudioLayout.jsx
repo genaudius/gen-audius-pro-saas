@@ -277,46 +277,8 @@ const StudioLayout = ({ currentView, setCurrentView, children, onLogout }) => {
                 {/* ── PROVIDER STATUS ── */}
                 <div className="px-1 mb-2">
                     <div className="text-[7px] text-white/20 tracking-[0.4em] uppercase mb-1.5 px-1">API Chain</div>
-                    <div
-                        style={{
-                            padding: '6px 8px',
-                            borderRadius: '10px',
-                            background: 'rgba(0,229,255,0.03)',
-                            border: '1px solid rgba(0,229,255,0.08)',
-                        }}
-                    >
+                    <div style={{ padding: '6px 8px', borderRadius: '10px', background: 'rgba(0,229,255,0.03)', border: '1px solid rgba(0,229,255,0.08)' }}>
                         <ProviderStatusBar />
-                    </div>
-                </div>
-
-                {/* ── PREMIER CARD (Mureka style) ── */}
-                <div className="px-1 mb-4">
-                    <div 
-                        className="p-4 rounded-2xl relative overflow-hidden group"
-                        style={{ 
-                            background: 'linear-gradient(180deg, #2D1D57 0%, #1A1133 100%)',
-                            border: '1px solid rgba(155, 135, 245, 0.2)'
-                        }}
-                    >
-                        <div className="flex items-center gap-2 mb-1.5">
-                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#A78BFA] to-[#7C3AED] flex items-center justify-center shadow-lg">
-                                <ShieldCheck size={12} className="text-white" />
-                            </div>
-                            <span className="font-black text-[10px] tracking-widest uppercase text-white">Hazte Premier</span>
-                        </div>
-                        <p className="text-[9px] text-white/40 leading-relaxed mb-3">
-                            Libera todo el poder del ADN Audius con acceso ilimitado.
-                        </p>
-                        <motion.button 
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            className="w-full py-2 bg-[#F5A623] text-[#030816] font-black text-[9px] tracking-[0.1em] uppercase rounded-lg hover:bg-[#FFB945] transition-colors"
-                        >
-                            Subir Nivel
-                        </motion.button>
-                        
-                        {/* Glow effect */}
-                        <div className="absolute -top-10 -right-10 w-24 h-24 bg-[#7C3AED]/20 blur-3xl rounded-full" />
                     </div>
                 </div>
                 {/* ── USER + LOGOUT ── */}
