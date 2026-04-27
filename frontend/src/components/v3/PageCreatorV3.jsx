@@ -57,11 +57,17 @@ export default function PageCreatorV3({ isAdmin = false, sessionUser = null, onL
   const [type, setType] = useState('music');
   const [activeTab, setActiveTab] = useState('easy');
 
-  // Reset to Easy when switching type
+  // Reset all fields when switching type
   const handleTypeChange = (newType) => {
     setType(newType);
     setActiveTab('easy');
     setShowAdvanced(false);
+    setPrompt('');
+    setLyrics('');
+    setStyleText('');
+    setSongTitle('');
+    setSelectedStyles([]);
+    setGenError(null);
   };
 
   // Form fields
@@ -719,78 +725,215 @@ export default function PageCreatorV3({ isAdmin = false, sessionUser = null, onL
       {/* ── CENTER: Results Workspace ── */}
       <div className="flex-1 flex flex-col min-w-0 bg-[#0b0b0c]">
 
-        {/* Top Bar */}
+        {/* Top Bar — changes per type */}
         <div className="h-16 border-b border-white/5 flex items-center justify-between px-8 shrink-0">
-          <span className="text-sm font-black text-white uppercase tracking-widest">My Work</span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-black text-white uppercase tracking-widest">
+              {currentTypeDef?.label} Studio
+            </span>
+            <span className="text-xs bg-[#9b87f5]/10 text-[#9b87f5] px-2 py-0.5 rounded-md font-bold uppercase border border-[#9b87f5]/20">
+              {results.length} items
+            </span>
+          </div>
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 border border-white/10" />
         </div>
 
         {/* Results */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
           {results.length === 0 ? (
+            /* Empty state — changes per type */
             <div className="h-full flex flex-col items-center justify-center select-none">
               <div className="relative mb-6">
                 <div className="absolute inset-0 bg-[#9b87f5]/20 blur-3xl rounded-full" />
                 <div className="relative w-28 h-28 bg-[#141416] rounded-full flex items-center justify-center border border-white/5">
-                  <Music2 size={44} className="text-[#9b87f5]" />
+                  <currentTypeDef.icon size={44} className="text-[#9b87f5]" />
                 </div>
                 <div className="absolute -top-2 -right-2 bg-[#9b87f5] p-2 rounded-full">
                   <Sparkles size={14} className="text-white" />
                 </div>
               </div>
-              <h3 className="text-xl font-black text-white uppercase tracking-tight opacity-40">No data yet</h3>
+              <h3 className="text-xl font-black text-white uppercase tracking-tight opacity-40">
+                {type === 'music'  && 'Tu música aparecerá aquí'}
+                {type === 'image'  && 'Tus imágenes aparecerán aquí'}
+                {type === 'video'  && 'Tus videos aparecerán aquí'}
+                {type === 'voice'  && 'Tu voz generada aparecerá aquí'}
+                {type === 'lyrics' && 'Tus letras aparecerán aquí'}
+              </h3>
               <p className="text-xs text-gray-600 font-bold uppercase mt-2 tracking-widest opacity-40">
-                Start creating your first ADN masterpiece
+                {type === 'music'  && 'Describe tu canción y presiona Create'}
+                {type === 'image'  && 'Describe la imagen y presiona Create'}
+                {type === 'video'  && 'Describe la escena y presiona Create'}
+                {type === 'voice'  && 'Escribe el texto y presiona Create'}
+                {type === 'lyrics' && 'Describe el tema y presiona Create'}
               </p>
             </div>
           ) : (
-            <div className="space-y-3 max-w-3xl">
-              {results.map((r, i) => (
-                <motion.div
-                  key={r.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  onClick={() => setSelectedResult(r)}
-                  className="flex items-center gap-5 p-4 bg-[#141416]/60 border border-white/5 rounded-2xl hover:border-[#9b87f5]/30 hover:bg-[#1a1c25]/60 transition-all cursor-pointer group"
-                >
-                  <div className="w-14 h-14 shrink-0 bg-[#1e1c22] rounded-xl flex items-center justify-center border border-white/10 overflow-hidden group-hover:scale-105 transition-transform">
-                    {r.status && r.status !== 'complete' && r.status !== 'failed'
-                      ? <RefreshCw size={22} className="text-[#9b87f5] animate-spin" />
+            /* Results grid — layout changes per type */
+            type === 'image' ? (
+              /* IMAGE — grid de imágenes */
+              <div className="grid grid-cols-2 gap-4 max-w-3xl">
+                {results.map((r, i) => (
+                  <motion.div
+                    key={r.id}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: i * 0.05 }}
+                    onClick={() => setSelectedResult(r)}
+                    className="aspect-square rounded-2xl overflow-hidden border border-white/5 hover:border-[#9b87f5]/40 cursor-pointer group relative bg-[#141416]"
+                  >
+                    {r.status !== 'complete'
+                      ? <div className="w-full h-full flex items-center justify-center"><RefreshCw size={28} className="text-[#9b87f5] animate-spin" /></div>
                       : r.imageUrl
-                      ? <img src={r.imageUrl} className="w-full h-full object-cover" alt="" />
-                      : <Music2 size={22} className="text-[#9b87f5]" />
+                      ? <img src={r.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt={r.prompt} />
+                      : <div className="w-full h-full flex items-center justify-center"><ImageIcon size={40} className="text-[#9b87f5]/30" /></div>
                     }
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-white uppercase truncate">{r.prompt}</p>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <span className="text-xs bg-[#9b87f5]/10 text-[#9b87f5] px-2 py-0.5 rounded-md font-bold uppercase">{r.type}</span>
-                      <span className="text-xs text-gray-500 font-bold">
-                        {new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      {r.status && r.status !== 'complete' && (
-                        <span className={`text-xs font-bold ml-2 ${r.status === 'failed' ? 'text-red-400' : 'text-[#9b87f5]'}`}>
-                           {r.status} {r.percent ? `(${r.percent}%)` : ''}
-                           {r.status === 'failed' && r.error ? ` - ${r.error}` : ''}
-                        </span>
-                      )}
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <p className="text-xs font-bold text-white truncate">{r.prompt}</p>
+                      <div className="flex gap-2 mt-2">
+                        <button className="p-1.5 bg-white/10 rounded-lg"><Download size={12} className="text-white" /></button>
+                        <button className="p-1.5 bg-white/10 rounded-lg"><Heart size={12} className="text-white" /></button>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <button className="p-2 bg-white/5 rounded-lg border border-white/5 text-gray-400 hover:text-white">
-                      <Heart size={16} />
-                    </button>
-                    <button className="p-2 bg-white/5 rounded-lg border border-white/5 text-gray-400 hover:text-white">
-                      <Download size={16} />
-                    </button>
-                    <button className="px-4 py-2 bg-[#9b87f5] text-white rounded-lg text-xs font-black uppercase">
-                      View
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+                  </motion.div>
+                ))}
+              </div>
+            ) : type === 'lyrics' ? (
+              /* LYRICS — cards de texto */
+              <div className="space-y-4 max-w-2xl">
+                {results.map((r, i) => (
+                  <motion.div
+                    key={r.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    onClick={() => setSelectedResult(r)}
+                    className="p-6 bg-[#141416]/60 border border-white/5 rounded-2xl hover:border-[#9b87f5]/30 cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-xs font-black text-[#9b87f5] uppercase tracking-widest">{r.prompt}</span>
+                      <span className="text-xs text-gray-600">{new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    {r.status !== 'complete'
+                      ? <div className="flex items-center gap-2 text-[#9b87f5]"><RefreshCw size={14} className="animate-spin" /><span className="text-xs font-bold">Generando letras…</span></div>
+                      : <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap line-clamp-6">{r.text || 'Sin contenido'}</p>
+                    }
+                    <div className="flex gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button className="px-3 py-1.5 bg-[#9b87f5] text-white rounded-lg text-xs font-black uppercase">Ver completo</button>
+                      <button className="p-1.5 bg-white/5 rounded-lg border border-white/5"><Download size={12} className="text-gray-400" /></button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            ) : type === 'video' ? (
+              /* VIDEO — cards con preview */
+              <div className="space-y-4 max-w-3xl">
+                {results.map((r, i) => (
+                  <motion.div
+                    key={r.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    onClick={() => setSelectedResult(r)}
+                    className="bg-[#141416]/60 border border-white/5 rounded-2xl overflow-hidden hover:border-[#9b87f5]/30 cursor-pointer group"
+                  >
+                    <div className="aspect-video bg-[#1e1c22] flex items-center justify-center relative">
+                      {r.status !== 'complete'
+                        ? <div className="flex flex-col items-center gap-3"><RefreshCw size={28} className="text-[#9b87f5] animate-spin" /><span className="text-xs text-gray-500 font-bold">Generando video…</span></div>
+                        : r.url
+                        ? <video src={r.url} className="w-full h-full object-cover" controls />
+                        : <Video size={40} className="text-[#9b87f5]/30" />
+                      }
+                    </div>
+                    <div className="p-4 flex items-center justify-between">
+                      <p className="text-sm font-black text-white truncate">{r.prompt}</p>
+                      <div className="flex gap-2 shrink-0 ml-4">
+                        <button className="p-2 bg-white/5 rounded-lg border border-white/5"><Download size={14} className="text-gray-400" /></button>
+                        <button className="p-2 bg-white/5 rounded-lg border border-white/5"><Heart size={14} className="text-gray-400" /></button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            ) : type === 'voice' ? (
+              /* VOICE — cards con audio player */
+              <div className="space-y-3 max-w-2xl">
+                {results.map((r, i) => (
+                  <motion.div
+                    key={r.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="p-5 bg-[#141416]/60 border border-white/5 rounded-2xl hover:border-[#9b87f5]/30 group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 shrink-0 bg-[#1e1c22] rounded-xl flex items-center justify-center border border-white/10">
+                        {r.status !== 'complete'
+                          ? <RefreshCw size={18} className="text-[#9b87f5] animate-spin" />
+                          : <Mic size={18} className="text-[#9b87f5]" />
+                        }
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-black text-white truncate">{r.prompt}</p>
+                        {r.url
+                          ? <audio src={r.url} controls className="w-full mt-2 h-8" style={{ filter: 'invert(1) hue-rotate(240deg)' }} />
+                          : <p className="text-xs text-gray-500 mt-1">{r.status !== 'complete' ? 'Generando…' : 'Sin audio'}</p>
+                        }
+                      </div>
+                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button className="p-2 bg-white/5 rounded-lg border border-white/5"><Download size={14} className="text-gray-400" /></button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            ) : (
+              /* MUSIC — lista con player */
+              <div className="space-y-3 max-w-3xl">
+                {results.map((r, i) => (
+                  <motion.div
+                    key={r.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    onClick={() => setSelectedResult(r)}
+                    className="flex items-center gap-5 p-4 bg-[#141416]/60 border border-white/5 rounded-2xl hover:border-[#9b87f5]/30 hover:bg-[#1a1c25]/60 transition-all cursor-pointer group"
+                  >
+                    <div className="w-14 h-14 shrink-0 bg-[#1e1c22] rounded-xl flex items-center justify-center border border-white/10 overflow-hidden group-hover:scale-105 transition-transform">
+                      {r.status && r.status !== 'complete' && r.status !== 'failed'
+                        ? <RefreshCw size={22} className="text-[#9b87f5] animate-spin" />
+                        : r.imageUrl
+                        ? <img src={r.imageUrl} className="w-full h-full object-cover" alt="" />
+                        : <Music2 size={22} className="text-[#9b87f5]" />
+                      }
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-black text-white uppercase truncate">{r.prompt}</p>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <span className="text-xs text-gray-500 font-bold">
+                          {new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {r.status && r.status !== 'complete' && (
+                          <span className={`text-xs font-bold ${r.status === 'failed' ? 'text-red-400' : 'text-[#9b87f5]'}`}>
+                            {r.status} {r.percent ? `(${r.percent}%)` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      <button className="p-2 bg-white/5 rounded-lg border border-white/5 text-gray-400 hover:text-white">
+                        <Heart size={16} />
+                      </button>
+                      <button className="p-2 bg-white/5 rounded-lg border border-white/5 text-gray-400 hover:text-white">
+                        <Download size={16} />
+                      </button>
+                      <button className="px-4 py-2 bg-[#9b87f5] text-white rounded-lg text-xs font-black uppercase">
+                        View
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )
           )}
         </div>
 
