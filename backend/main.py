@@ -226,7 +226,7 @@ _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localh
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 # 🎯 CONFIGURACIÓN DE ADMIN
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@genaudius.com")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "genaudius@gmail.com")
 
 # 🛡️ ANTI-HACKER RATE LIMITER (Burst protection)
 REDIS_URL = os.getenv("REDIS_URL")
@@ -740,32 +740,42 @@ async def root(db: Session = Depends(get_db)):
 async def social_login(request: SocialLoginRequest, db: Session = Depends(get_db)):
     """Handle social login from Firebase and sync/provision user."""
     user_id = f"fb_{request.uid}"
-    
-    # Check if wallet exists
+    is_admin = request.email.lower() == ADMIN_EMAIL.lower()
+    user_role = "admin" if is_admin else "user"
+
+    # Upsert UserAccount
+    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
+    if not user:
+        user = UserAccount(
+            user_id=user_id,
+            username=request.username or request.email.split('@')[0],
+            email=request.email,
+            password_hash="firebase_oauth",
+            role=user_role,
+            is_active=True,
+            is_verified=True,
+        )
+        db.add(user)
+        logger.info(f"🆕 [AUTH] New social user created: {user_id} ({request.email})")
+    else:
+        # Always sync role for admin email
+        if is_admin and user.role != "admin":
+            user.role = "admin"
+
+    # Upsert Wallet
     wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
     if not wallet:
-        # Auto-provision wallet for new social user
-        wallet = UserWallet(
-            user_id=user_id, 
-            credits=100, 
-            balance=10.0
-        )
+        credits = 99999 if is_admin else 100
+        wallet = UserWallet(user_id=user_id, credits=credits, balance=10.0)
         db.add(wallet)
-        
-        # Log first transaction as welcome bonus
-        transaction = CreditTransaction(
-            user_id=user_id,
-            amount=100,
-            type_="welcome_bonus",
-            description="Welcome bonus for choosing Gen Audius"
-        )
-        db.add(transaction)
-        db.commit()
-        db.refresh(wallet)
-        logger.info(f"🆕 [AUTH] New social user provisioned: {user_id}")
+        db.add(CreditTransaction(
+            user_id=user_id, amount=credits,
+            type_="welcome_bonus", description="Welcome bonus"
+        ))
+        logger.info(f"💰 [AUTH] Wallet provisioned for {user_id}: {credits} credits")
 
-    # Determine role based on email
-    user_role = "admin" if request.email.lower() == ADMIN_EMAIL.lower() else "user"
+    db.commit()
+    db.refresh(wallet)
 
     return {
         "user_id": user_id,
