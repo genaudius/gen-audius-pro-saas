@@ -261,9 +261,7 @@ export async function callCreationAPI(type, prompt, providerState, apiKeys, opti
         case "mureka":
         case "musicgpt":
           if (type === "music") {
-              // We use the existing backend integration for music
-              // the backend handles the actual API request securely
-              const { generateMusic, pollUntilReady } = await import('./aiService');
+              const { generateMusic } = await import('./aiService');
               const data = await generateMusic({ 
                   prompt, 
                   genre: options.genre || options.styles || 'Pop', 
@@ -279,11 +277,7 @@ export async function callCreationAPI(type, prompt, providerState, apiKeys, opti
                   provider: prov.id,
                   apiKey: key
               });
-              
               if ((!data?.tasks || data.tasks.length === 0) && !data?.task_id) throw new Error("No se pudo iniciar la generación de música en el backend");
-              
-              // Instead of polling here and blocking the UI, we just return the raw task list 
-              // for the React component to manage its own loading indicators.
               return { 
                   provider: prov.name, 
                   type: "audio", 
@@ -294,15 +288,78 @@ export async function callCreationAPI(type, prompt, providerState, apiKeys, opti
           }
           throw new Error(`Integración no soportada para ${prov.id}`);
 
-        // ── VIDEO — require server-side integration ──
+        // ── IMAGE — via backend (GenAudius_V1 on Modal) ──
+        case "dalle3":
+        case "flux":
+        case "sdxl":
+        case "midj":
+          if (type === "image") {
+            const userId = localStorage.getItem('ga_user_id') || '';
+            const res = await fetch('/api/backend/api/image/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId },
+              body: JSON.stringify({
+                prompt,
+                aspect_ratio: options.aspect_ratio || '1:1',
+                style: options.style || null,
+                negative_prompt: options.negative_prompt || null,
+                provider: prov.id === 'dalle3' ? 'openai' : prov.id,
+                num_images: options.num_images || 1
+              })
+            });
+            if (!res.ok) { const e = await res.json(); throw new Error(e.detail || `Image error ${res.status}`); }
+            const data = await res.json();
+            return { provider: prov.name, type: "image", ...data };
+          }
+          throw new Error(`Integración no soportada para ${prov.id}`);
+
+        // ── VIDEO — via backend (GenAudius_V1 on Modal) ──
+        case "kie_vid":
+        case "runway":
+        case "pika":
+        case "luma":
+          if (type === "video") {
+            const userId = localStorage.getItem('ga_user_id') || '';
+            const res = await fetch('/api/backend/api/video/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId },
+              body: JSON.stringify({
+                prompt,
+                duration: options.duration || 5,
+                aspect_ratio: options.aspect_ratio || '16:9',
+                motion_style: options.motion_style || null,
+                provider: 'genaudius_v1'
+              })
+            });
+            if (!res.ok) { const e = await res.json(); throw new Error(e.detail || `Video error ${res.status}`); }
+            const data = await res.json();
+            return { provider: prov.name, type: "video", ...data };
+          }
+          throw new Error(`Integración no soportada para ${prov.id}`);
+
+        // ── VOICE — via backend ──
         default:
-          await new Promise(res => setTimeout(res, Math.random() * 3000 + 2000));
-          return {
-            provider: prov.name,
-            type: "video",
-            url: null,
-            note: `${prov.name} ${!key ? '(Sin API Key)' : ''} requiere integración server-side (Video simulado)`
-          };
+          if (type === "voice") {
+            const userId = localStorage.getItem('ga_user_id') || '';
+            const res = await fetch('/api/backend/api/voice/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId },
+              body: JSON.stringify({
+                text: prompt,
+                gender: options.gender || 'female',
+                speed: options.speed || 'normal',
+                tone: options.tone || null,
+                provider: prov.id === 'elevenlabs' ? 'elevenlabs' : 'openai_tts',
+                voice_id: options.voice_id || null
+              })
+            });
+            if (!res.ok) { const e = await res.json(); throw new Error(e.detail || `Voice error ${res.status}`); }
+            const data = await res.json();
+            return { provider: prov.name, type: "audio", url: data.audio_url, ...data };
+          }
+          // Unknown provider fallback
+          await new Promise(res => setTimeout(res, 1500));
+          return { provider: prov.name, type, note: `${prov.name} requiere integración server-side` };
       }
     } catch (err) {
       lastErr = err;
