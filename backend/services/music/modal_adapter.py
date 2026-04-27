@@ -96,19 +96,33 @@ class ModalMusicAdapter(MusicProvider):
             return {"success": False, "error": str(e)}
 
     def get_status(self, task_id: str) -> dict:
-        """
-        Consulta el estado de una tarea asíncrona en Modal usando el endpoint V1.
-        """
         try:
-            endpoint = "/api/v1/status"
-            target_url = f"{self.base_url.rstrip('/')}{endpoint}"
-            
+            target_url = f"{self.base_url.rstrip('/')}/api/v1/status"
             response = self._session.get(f"{target_url}?task_id={task_id}", timeout=60)
-            
+
             if response.status_code != 200:
                 return {"success": False, "status": "failed", "error": f"Cloud Error {response.status_code}"}
-            
-            return response.json()
+
+            raw = response.json()
+            # Modal orchestrator wraps result in {"data": {...}, "status": "..."}
+            data = raw.get("data", raw)
+            status = data.get("status") or raw.get("status", "processing")
+
+            # Normalize status
+            if status in ("complete", "success", "completed"):
+                return {
+                    "success": True,
+                    "status": "complete",
+                    "audio_url": data.get("audio_url"),
+                    "image_url": data.get("image_url"),
+                    "lyrics": data.get("lyrics"),
+                    "title": data.get("title"),
+                }
+            elif status == "failed":
+                return {"success": False, "status": "failed", "error": data.get("error", data.get("message", "Failed"))}
+            else:
+                return {"success": True, "status": "processing", "progress": data.get("progress", 10), "message": data.get("message", "")}
+
         except Exception as e:
             logger.error(f"❌ [MODAL-POLL] Error: {e}")
             return {"success": False, "status": "failed", "error": str(e)}
