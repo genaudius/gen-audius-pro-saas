@@ -14,7 +14,7 @@ export default function PageLegalAdmin() {
 
   const fetchDocs = async () => {
     try {
-      const res = await fetch('/api/admin/legal');
+      const res = await fetch('/api/backend/api/admin/legal');
       const data = await res.json();
       setDocs(data);
       if (data.length > 0) setSelected(data[0]);
@@ -30,7 +30,7 @@ export default function PageLegalAdmin() {
     setSaving(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/admin/legal/update', {
+      const res = await fetch('/api/backend/api/admin/legal/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

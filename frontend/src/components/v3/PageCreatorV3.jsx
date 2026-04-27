@@ -108,13 +108,44 @@ export default function PageCreatorV3({ isAdmin = false, sessionUser = null, onL
     setGenerating(true);
     setGenError(null);
     try {
-      const opts = {
-        gender: vocalGender,
-        instrumental,
-        styles: selectedStyles.map(id => STYLE_TAGS.find(s => s.id === id)?.name).filter(Boolean).join(', '),
-        lyrics: gLyrics,
-        title: songTitle.trim(),
-      };
+      // Build options based on creation type
+      let opts = {};
+      if (type === 'music') {
+        opts = {
+          gender: vocalGender, instrumental,
+          styles: selectedStyles.map(id => STYLE_TAGS.find(s => s.id === id)?.name).filter(Boolean).join(', '),
+          lyrics: gLyrics, title: songTitle.trim(),
+        };
+      } else if (type === 'image') {
+        opts = {
+          aspect_ratio: styleText || '1:1',
+          style: lyrics || null,
+          negative_prompt: songTitle || null,
+          num_images: 1,
+        };
+      } else if (type === 'video') {
+        const durMap = { '5s': 5, '10s': 10, '15s': 15, '30s': 30, '60s': 60 };
+        opts = {
+          duration: durMap[songTitle] || 5,
+          aspect_ratio: styleText || '16:9',
+          motion_style: lyrics || null,
+        };
+      } else if (type === 'voice') {
+        const speedMap = { 'Lenta': 'slow', 'Normal': 'normal', 'Rápida': 'fast' };
+        opts = {
+          gender: vocalGender,
+          speed: speedMap[styleText] || 'normal',
+          tone: lyrics || null,
+        };
+      } else if (type === 'lyrics') {
+        opts = {
+          lang: styleText || 'Español',
+          genre: selectedStyles.map(id => STYLE_TAGS.find(s => s.id === id)?.name).filter(Boolean)[0] || 'Pop',
+          theme: prompt.trim(),
+          structure: lyrics || 'Verso + Coro',
+        };
+      }
+
       const result = await callCreationAPI(type, gPrompt, providerState, apiKeys || {}, opts);
       
       // Graceful fallback if backend sends old `task_id` format
@@ -170,11 +201,18 @@ export default function PageCreatorV3({ isAdmin = false, sessionUser = null, onL
           });
         });
       } else {
+        // Handle image array from backend
+        const imageUrl = result.images?.[0]?.url || result.images?.[0] || (type === 'image' ? result.url : null);
         setResults(r => [{
           id: Date.now(), type, prompt: gPrompt,
-          url: result.url || null,
+          url: (type === 'voice' || type === 'music') ? (result.url || result.audio_url || null) : null,
           text: result.text || null,
-          imageUrl: (type === 'image' && result.url) ? result.url : null,
+          imageUrl: imageUrl || (type === 'image' ? result.url : null),
+          task_id: result.task_id || null,
+          status: result.status === 'processing' ? 'processing' : 'complete',
+          percent: result.status === 'processing' ? 0 : 100,
+          engine: result.engine || result.provider || null,
+          credits_used: result.credits_used || null,
           createdAt: new Date(),
         }, ...r.slice(0, 50)]);
       }

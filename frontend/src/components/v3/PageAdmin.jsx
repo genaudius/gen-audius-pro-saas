@@ -192,13 +192,55 @@ export default function PageAdmin({ liveStats = {}, providerState = {}, setProvi
     return () => clearInterval(id);
   }, []);
 
-  const users = [
-    { nm: "Carlos M.", email: "carlos@studio.mx",  plan: "Pro",        gens: 127,  st: "active" },
-    { nm: "Sarah J.",  email: "sarah@beats.io",    plan: "Enterprise", gens: 834,  st: "active" },
-    { nm: "DJ Phantom",email: "phantom@dj.com",    plan: "Free",       gens: 12,   st: "active" },
-    { nm: "Laura V.",  email: "laura@music.co",    plan: "Pro",        gens: 256,  st: "suspended" },
-    { nm: "Mike C.",   email: "mike@studio.sg",    plan: "Enterprise", gens: 1203, st: "active" },
-  ];
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userSearch, setUserSearch] = useState("");
+  const [userDetail, setUserDetail] = useState(null);
+
+  const fetchUsers = async (search = "") => {
+    setUsersLoading(true);
+    try {
+      const userId = localStorage.getItem('ga_user_id');
+      const params = search ? `?search=${encodeURIComponent(search)}` : "";
+      const res = await fetch(`/api/backend/api/admin/users${params}`, {
+        headers: { 'X-User-ID': userId || '' }
+      });
+      if (res.ok) setUsers(await res.json());
+    } catch (err) {
+      console.error("Error fetching users:", err);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const handleSuspend = async (userId, currentlyActive) => {
+    const adminId = localStorage.getItem('ga_user_id');
+    try {
+      const res = await fetch(`/api/backend/api/admin/users/${userId}/suspend`, {
+        method: 'PUT',
+        headers: { 'X-User-ID': adminId || '' }
+      });
+      if (res.ok) setUsers(prev => prev.map(u => u.user_id === userId ? { ...u, is_active: !currentlyActive } : u));
+    } catch (err) {
+      console.error("Error suspending user:", err);
+    }
+  };
+
+  const handleViewUser = async (userId) => {
+    const adminId = localStorage.getItem('ga_user_id');
+    try {
+      const res = await fetch(`/api/backend/api/admin/users/${userId}`, {
+        headers: { 'X-User-ID': adminId || '' }
+      });
+      if (res.ok) setUserDetail(await res.json());
+    } catch (err) {
+      console.error("Error fetching user detail:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === "users") fetchUsers(userSearch);
+  }, [tab]);
 
   const lvCol = l => l === "ERROR" ? C.err : l === "WARN" ? C.warn : C.t3;
   const allProviders = Object.entries(providerState).flatMap(([type, provs]) =>
@@ -302,45 +344,104 @@ export default function PageAdmin({ liveStats = {}, providerState = {}, setProvi
 
       {tab === "users" && (
         <div className="v3-card">
+          {/* User Detail Modal */}
+          {userDetail && (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={() => setUserDetail(null)}>
+              <div style={{ background: "#0d1117", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: 28, minWidth: 380, maxWidth: 500 }}
+                onClick={e => e.stopPropagation()}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>👤 {userDetail.username}</h3>
+                  <button onClick={() => setUserDetail(null)} style={{ background: "none", border: "none", color: C.t2, cursor: "pointer", fontSize: 20 }}>×</button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 13 }}>
+                  {[
+                    ["Email", userDetail.email],
+                    ["Rol", userDetail.role],
+                    ["Estado", userDetail.is_active ? "✅ Activo" : "🚫 Suspendido"],
+                    ["Créditos", userDetail.credits],
+                    ["Generaciones", userDetail.generations],
+                    ["Último login", userDetail.last_login ? new Date(userDetail.last_login).toLocaleString() : "—"],
+                    ["Registrado", userDetail.created_at ? new Date(userDetail.created_at).toLocaleDateString() : "—"],
+                  ].map(([k, v]) => (
+                    <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <span style={{ color: C.t2 }}>{k}</span>
+                      <span style={{ color: C.t1, fontWeight: 600 }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                {userDetail.recent_generations?.length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ fontSize: 11, color: C.t3, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Últimas generaciones</div>
+                    {userDetail.recent_generations.map((g, i) => (
+                      <div key={i} style={{ fontSize: 12, color: C.t2, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                        <span style={{ color: C.t1 }}>{g.engine || "—"}</span>
+                        <span style={{ marginLeft: 8, color: C.t3 }}>{g.status}</span>
+                        <span style={{ marginLeft: 8, color: C.t3 }}>{g.credits_used} créditos</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-            <input className="v3-inp" placeholder="🔍 Buscar usuarios…" style={{ maxWidth: 250 }} />
+            <input
+              className="v3-inp"
+              placeholder="🔍 Buscar usuarios…"
+              style={{ maxWidth: 250 }}
+              value={userSearch}
+              onChange={e => setUserSearch(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && fetchUsers(userSearch)}
+            />
             <div style={{ display: "flex", gap: 8 }}>
               <select className="v3-sel" style={{ width: 150 }}><option>Todos los planes</option><option>Free</option><option>Pro</option><option>Enterprise</option></select>
-              <button className="v3-btn v3-btn-pr v3-btn-sm">+ Invitar</button>
+              <button className="v3-btn v3-btn-pr v3-btn-sm" onClick={() => fetchUsers(userSearch)}>🔄 Actualizar</button>
             </div>
           </div>
-          <table className="v3-tbl">
-            <thead><tr><th>Usuario</th><th>Plan</th><th>Generaciones</th><th>Estado</th><th>Acciones</th></tr></thead>
-            <tbody>
-              {users.map((u, i) => (
-                <tr key={i}>
-                  <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: C.aBg, border: `1px solid ${C.aBd}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: C.aLt, flexShrink: 0 }}>{u.nm[0]}</div>
-                      <div>
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>{u.nm}</div>
-                        <div style={{ fontSize: 13, color: C.t2 }}>{u.email}</div>
+          {usersLoading ? (
+            <div style={{ textAlign: "center", padding: 40, color: C.t2 }}>Cargando usuarios…</div>
+          ) : (
+            <table className="v3-tbl">
+              <thead><tr><th>Usuario</th><th>Rol</th><th>Generaciones</th><th>Estado</th><th>Acciones</th></tr></thead>
+              <tbody>
+                {users.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: C.t2, padding: 24 }}>No hay usuarios registrados</td></tr>
+                ) : users.map((u) => (
+                  <tr key={u.user_id}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 34, height: 34, borderRadius: "50%", background: C.aBg, border: `1px solid ${C.aBd}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: C.aLt, flexShrink: 0 }}>{(u.username || "?")[0].toUpperCase()}</div>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{u.username}</div>
+                          <div style={{ fontSize: 13, color: C.t2 }}>{u.email}</div>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td><span className={`v3-tag ${u.plan === "Enterprise" ? "v3-tag-warn" : u.plan === "Pro" ? "v3-tag-a" : "v3-tag-dim"}`} style={{ fontSize: 12 }}>{u.plan}</span></td>
-                  <td><span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 14 }}>{u.gens.toLocaleString()}</span></td>
-                  <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: u.st === "active" ? C.ok : C.err }} />
-                      <span style={{ fontSize: 14, color: u.st === "active" ? C.ok : C.err }}>{u.st === "active" ? "Activo" : "Suspendido"}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button className="v3-btn v3-btn-gh v3-btn-sm">Ver</button>
-                      <button className="v3-btn v3-btn-sm" style={{ background: `${C.err}12`, color: C.err, border: `1px solid ${C.err}30` }}>Suspender</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </td>
+                    <td><span className={`v3-tag ${u.role === "admin" ? "v3-tag-warn" : u.role === "artist" ? "v3-tag-a" : "v3-tag-dim"}`} style={{ fontSize: 12 }}>{u.role}</span></td>
+                    <td><span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 14 }}>{(u.generations || 0).toLocaleString()}</span></td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 7, height: 7, borderRadius: "50%", background: u.is_active ? C.ok : C.err }} />
+                        <span style={{ fontSize: 14, color: u.is_active ? C.ok : C.err }}>{u.is_active ? "Activo" : "Suspendido"}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="v3-btn v3-btn-gh v3-btn-sm" onClick={() => handleViewUser(u.user_id)}>Ver</button>
+                        <button
+                          className="v3-btn v3-btn-sm"
+                          style={{ background: `${u.is_active ? C.err : C.ok}12`, color: u.is_active ? C.err : C.ok, border: `1px solid ${u.is_active ? C.err : C.ok}30` }}
+                          onClick={() => handleSuspend(u.user_id, u.is_active)}
+                        >{u.is_active ? "Suspender" : "Activar"}</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 

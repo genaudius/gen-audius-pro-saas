@@ -29,7 +29,7 @@ export default defineConfig({
         secure: true,
       },
       '/api/backend': {
-        target: 'http://127.0.0.1:8005',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/backend/, ''),
         secure: false,

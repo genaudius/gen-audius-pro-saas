@@ -30,47 +30,24 @@ export default function SupportHub() {
     setLoading(true);
 
     try {
-      // System prompt for the Support Assistant
-      const systemPrompt = `
-        Eres el Asistente Oficial de Soporte y Ventas de Gen Audius Pro.
-        Gen Audius es una plataforma líder de música por IA que usa modelos como Suno, Kie.ai, Flux, y Masterchannel.
-        
-        INFORMACIÓN CLAVE:
-        - Registro: Es necesario registrarse para usar el Studio.
-        - Free: 100 tokens diarios gratis para usuarios registrados.
-        - Pro: $19.99/mes, tokens ilimitados, mastering prioritario.
-        - Enterprise: Consultar precios para sellos discográficos.
-        - Créditos: $1 USD equivale a 10 créditos si se compran por separado.
-        - Generación: Música, Imágenes, Video, Voz (TTS) y Letras.
-        - Mastering: Usamos algoritmos Neve/SSL para calidad de estudio.
-        - Empresa: Ubicados en el futuro de la música.
-        
-        Tu tono debe ser profesional, servicial y de "lujo oscuro" (premium).
-        Responde brevemente si es posible. No inventes precios fuera de estos.
-      `;
+      const res = await fetch('/api/backend/api/support/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMsg,
+          history: messages.slice(-6).map(m => ({ role: m.role, text: m.text }))
+        })
+      });
 
-      // Simplified API call to OpenAI or similar via our ProviderEngine logic
-      // For now, we simulate but we could use callCreationAPI
-      setTimeout(() => {
-        let response = "No estoy seguro de eso, pero puedes contactar a soporte@genaudius.com. ¿Te interesa saber sobre el plan Pro?";
-        
-        const lower = userMsg.toLowerCase();
-        if (lower.includes("precio") || lower.includes("plan") || lower.includes("cuanto cuesta")) {
-          response = "Tenemos 3 planes: El Free (100 tokens día), el Pro ($19.99/mes con todo ilimitado) y el Enterprise para empresas. ¿Quieres que te ayude a elegir uno?";
-        } else if (lower.includes("funciona") || lower.includes("como se usa")) {
-          response = "Es muy fácil: escribes una descripción (prompt) de lo que quieres (ej: 'reggaeton oscuro') y nuestra IA genera la pista, voz y hasta el arte en segundos.";
-        } else if (lower.includes("token") || lower.includes("credito")) {
-          response = "Regalamos 100 tokens diarios a todos los artistas registrados. Si necesitas más, puedes comprar créditos a razón de 10 créditos por $1 USD.";
-        } else if (lower.includes("gratis")) {
-          response = "¡Sí! Ofrecemos 100 tokens diarios totalmente gratis al registrarte.";
-        }
-
-        setMessages(prev => [...prev, { role: 'assistant', text: response }]);
-        setLoading(false);
-      }, 1000);
-
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', text: 'Error de conexión. Inténtalo más tarde.' }]);
+      }
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', text: 'Error de conexión. Inténtalo más tarde.' }]);
+    } finally {
       setLoading(false);
     }
   };
@@ -104,9 +81,9 @@ export default function SupportHub() {
                   <Bot size={20} color="#fff" />
                 </div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>Soporte Gen Audius</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>ChatGEN</div>
                   <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.ok }} /> ONLINE
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.ok }} /> ONLINE · Asistente IA
                   </div>
                 </div>
               </div>
