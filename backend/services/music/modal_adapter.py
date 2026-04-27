@@ -67,7 +67,7 @@ class ModalMusicAdapter(MusicProvider):
 
         try:
             # Apuntamos al nuevo endpoint unificado
-            endpoint = "/v1/generate"
+            endpoint = "/api/v1/generate"
             target_url = f"{self.base_url.rstrip('/')}{endpoint}"
             
             response = self._session.post(target_url, json=payload, timeout=300)
@@ -100,7 +100,7 @@ class ModalMusicAdapter(MusicProvider):
         Consulta el estado de una tarea asíncrona en Modal usando el endpoint V1.
         """
         try:
-            endpoint = "/v1/status"
+            endpoint = "/api/v1/status"
             target_url = f"{self.base_url.rstrip('/')}{endpoint}"
             
             response = self._session.get(f"{target_url}?task_id={task_id}", timeout=60)
