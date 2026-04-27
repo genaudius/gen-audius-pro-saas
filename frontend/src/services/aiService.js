@@ -23,7 +23,12 @@ async function apiFetch(path, options = {}) {
     });
     if (!res.ok) {
         let errorDetail = `HTTP ${res.status}`;
-        try { const err = await res.json(); errorDetail = err.detail || err.error || errorDetail; } catch {}
+        try {
+            const err = await res.json();
+            errorDetail = typeof err.detail === 'string' ? err.detail
+                        : typeof err.error === 'string'  ? err.error
+                        : JSON.stringify(err.detail || err.error || err);
+        } catch {}
         throw new Error(errorDetail);
     }
     return res.json();

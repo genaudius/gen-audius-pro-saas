@@ -223,7 +223,8 @@ export default function PageCreatorV3({ isAdmin = false, sessionUser = null, onL
         }, ...r.slice(0, 50)]);
       }
     } catch (err) {
-      setGenError(err.message);
+      const msg = typeof err.message === 'string' ? err.message : JSON.stringify(err.message || err);
+      setGenError(msg);
     } finally {
       setGenerating(false);
     }

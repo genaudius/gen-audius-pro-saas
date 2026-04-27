@@ -1,36 +1,32 @@
+"""
+Run inside the backend container:
+  docker exec genaudius-backend python3 seed_admin.py
+"""
 from database import SessionLocal, UserAccount, UserWallet
-import hashlib
 from datetime import datetime
 
-def hash_password(password: str) -> str:
-    return hashlib.sha256(f"genaudius_salt_2025{password}".encode()).hexdigest()
-
 db = SessionLocal()
-email = "admin@genaudius.com"
-user = db.query(UserAccount).filter(UserAccount.email == email).first()
+try:
+    user = db.query(UserAccount).filter(UserAccount.email == 'genaudius@gmail.com').first()
+    if not user:
+        print("ERROR: usuario genaudius@gmail.com no encontrado en la DB")
+    else:
+        print(f"Encontrado: {user.user_id} | rol actual: {user.role}")
+        user.role = 'admin'
+        user.is_active = True
+        user.is_verified = True
 
-if not user:
-    new_user = UserAccount(
-        user_id="admin_test",
-        username="Admin",
-        email=email,
-        password_hash=hash_password("admin123"),
-        is_active=True,
-        is_verified=True,
-        role="admin",
-        plan="pro"
-    )
-    db.add(new_user)
-    
-    # Add wallet
-    wallet = UserWallet(user_id="admin_test", credits=10000, balance=500.0)
-    db.add(wallet)
-    
-    db.commit()
-    print("Admin user created successfully!")
-else:
-    # Update password and role to ensure it works
-    user.password_hash = hash_password("admin123")
-    user.role = "admin"
-    db.commit()
-    print("Admin user already exists. Password updated to admin123.")
+        wallet = db.query(UserWallet).filter(UserWallet.user_id == user.user_id).first()
+        if not wallet:
+            wallet = UserWallet(user_id=user.user_id, credits=99999, balance=9999.0)
+            db.add(wallet)
+            print("Wallet creada con 99999 creditos")
+        else:
+            wallet.credits = 99999
+            wallet.balance = 9999.0
+            print(f"Wallet actualizada: 99999 creditos")
+
+        db.commit()
+        print("OK — admin + creditos aplicados a genaudius@gmail.com")
+finally:
+    db.close()
