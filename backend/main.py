@@ -304,39 +304,55 @@ async def security_rate_limiter(request: Request, call_next):
         return await call_next(request)
 
     client_ip = request.client.host
+    user_id = request.headers.get("X-User-ID", client_ip)
     now = datetime.utcnow()
-    
-    # 📡 Production: Use Redis
+
+    # ── Per-user strict limits on expensive generation endpoints ──────────────
+    GENERATION_PATHS = ["/api/music/generate", "/api/image/generate", "/api/video/generate", "/api/voice/generate"]
+    is_gen_endpoint = any(request.url.path.startswith(p) for p in GENERATION_PATHS)
+
     if redis_client:
         try:
-            key = f"rate_limit:{client_ip}"
-            requests = redis_client.incr(key)
-            if requests == 1:
-                redis_client.expire(key, 60)
-            
-            if requests > 100:
-                logger.warning(f"🚨 [SECURITY] Rate limit exceeded for {client_ip}")
-                return JSONResponse(
-                    status_code=429,
-                    content={"detail": "Too many requests. Please slow down."}
-                )
+            # Global IP rate limit: 150 req/60s
+            ip_key = f"rate_ip:{client_ip}"
+            ip_count = redis_client.incr(ip_key)
+            if ip_count == 1:
+                redis_client.expire(ip_key, 60)
+            if ip_count > 150:
+                logger.warning(f"🚨 [SECURITY] IP rate limit: {client_ip}")
+                return JSONResponse(status_code=429, content={"detail": "Demasiadas solicitudes. Espera un momento."})
+
+            # Per-user generation limit: 10 generations/60s
+            if is_gen_endpoint and user_id != client_ip:
+                gen_key = f"rate_gen:{user_id}"
+                gen_count = redis_client.incr(gen_key)
+                if gen_count == 1:
+                    redis_client.expire(gen_key, 60)
+                if gen_count > 10:
+                    logger.warning(f"🚨 [SECURITY] Generation rate limit: user {user_id}")
+                    return JSONResponse(status_code=429, content={"detail": "Límite de generaciones alcanzado. Espera 60 segundos."})
+
+            # Auth brute force: 10 attempts/300s
+            if request.url.path == "/api/auth/login":
+                auth_key = f"rate_auth:{client_ip}"
+                auth_count = redis_client.incr(auth_key)
+                if auth_count == 1:
+                    redis_client.expire(auth_key, 300)
+                if auth_count > 10:
+                    logger.warning(f"🚨 [SECURITY] Brute force attempt from {client_ip}")
+                    return JSONResponse(status_code=429, content={"detail": "Demasiados intentos de login. Espera 5 minutos."})
+
         except Exception as e:
             logger.error(f"Redis rate limit error: {e}")
-            # Fallback to in-memory if redis fails
-    
-    # 🧠 Local: In-memory fallback
+
+    # 🧠 In-memory fallback
     history = request_history.get(client_ip, [])
     history = [t for t in history if (now - t).seconds < 60]
     history.append(now)
     request_history[client_ip] = history
-    
-    if len(history) > 100:
-        logger.warning(f"🚨 [SECURITY] In-memory rate limit triggered for {client_ip}")
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "Too many requests. Please slow down."}
-        )
-        
+    if len(history) > 150:
+        return JSONResponse(status_code=429, content={"detail": "Demasiadas solicitudes. Espera un momento."})
+
     return await call_next(request)
 
 
@@ -361,7 +377,17 @@ def _get_user_id(request: Request) -> str:
     """Extract user ID from header or state (if injected by API Key check)."""
     if hasattr(request.state, "user_id"):
         return request.state.user_id
-    return request.headers.get("X-User-ID", "current_user")
+    uid = request.headers.get("X-User-ID", "")
+    if not uid or uid == "current_user":
+        raise HTTPException(status_code=401, detail="Autenticación requerida. Inicia sesión.")
+    return uid
+
+def _get_user_id_optional(request: Request) -> str:
+    """Extract user ID, returns 'anonymous' if not present (for public/wallet endpoints)."""
+    if hasattr(request.state, "user_id"):
+        return request.state.user_id
+    uid = request.headers.get("X-User-ID", "")
+    return uid if uid and uid != "current_user" else "anonymous"
 
 
 async def _is_admin(request: Request, db: Session = Depends(get_db)):
@@ -381,13 +407,10 @@ async def _is_admin(request: Request, db: Session = Depends(get_db)):
         db.commit()
         return user
         
-    # 3. Legacy / Demo fallback
-    if user_id in ["admin", "fb_admin", "dev_admin"]:
-        return None 
+    # 3. Legacy / Demo fallback — REMOVED for security
+    # if user_id in ["admin", "fb_admin", "dev_admin"]:
+    #     return None
 
-    # 4. Check against hardcoded admin user IDs if necessary
-    # (In a real app, you'd use Firebase ID Tokens to verify the email directly)
-    
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Acceso denegado: Se requieren permisos de administrador."
@@ -451,27 +474,26 @@ def _deduct_credits_atomic(db: Session, user_id: str, amount: int) -> UserWallet
 # ─── STRIPE ORCHESTRATION ─────────────────────────────────────────────────────
 
 @app.post("/api/stripe/create-checkout-session")
-async def create_checkout_session(req: StripeSessionRequest, db: Session = Depends(get_db)):
-    # In practice, get user_id from auth token
-    user_id = "current_user" 
+async def create_checkout_session(req: StripeSessionRequest, request: Request, db: Session = Depends(get_db)):
+    user_id = _get_user_id(request)
     user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-    
-    # Map plan to Price IDs (You should create these in your Stripe Dashboard)
-    # These are placeholders
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Map plan to Stripe Price IDs — configure in .env
     price_map = {
-        "basic": "price_basic_123",
-        "pro": "price_pro_456",
-        "studio": "price_studio_789"
+        "basic":   os.getenv("STRIPE_PRICE_BASIC",   ""),
+        "pro":     os.getenv("STRIPE_PRICE_PRO",     ""),
+        "studio":  os.getenv("STRIPE_PRICE_STUDIO",  ""),
     }
-    
     price_id = price_map.get(req.plan_id)
     if not price_id:
-        raise HTTPException(status_code=400, detail="Plan no válido")
+        raise HTTPException(status_code=400, detail=f"Plan '{req.plan_id}' no válido o sin Price ID configurado")
 
     try:
         session = stripe.checkout.Session.create(
-            customer=user.stripe_customer_id if user and user.stripe_customer_id else None,
-            customer_email=user.email if not user or not user.stripe_customer_id else None,
+            customer=user.stripe_customer_id if user.stripe_customer_id else None,
+            customer_email=user.email if not user.stripe_customer_id else None,
             payment_method_types=['card'],
             line_items=[{'price': price_id, 'quantity': 1}],
             mode='subscription',
@@ -486,12 +508,11 @@ async def create_checkout_session(req: StripeSessionRequest, db: Session = Depen
 
 
 @app.get("/api/user/earnings")
-async def get_user_earnings(db: Session = Depends(get_db)):
-    user_id = "current_user" # Real user from auth
+async def get_user_earnings(request: Request, db: Session = Depends(get_db)):
+    user_id = _get_user_id(request)
     earnings = db.query(UserEarnings).filter(UserEarnings.user_id == user_id).first()
     if not earnings:
         return {"current_balance": 0.0, "total_earned": 0.0, "payouts": []}
-    
     payouts = db.query(StripePayout).filter(StripePayout.user_id == user_id).order_by(StripePayout.created_at.desc()).all()
     return {
         "current_balance": earnings.current_balance,
@@ -501,8 +522,8 @@ async def get_user_earnings(db: Session = Depends(get_db)):
 
 
 @app.post("/api/user/payout")
-async def request_payout(req: PayoutRequest, db: Session = Depends(get_db)):
-    user_id = "current_user"
+async def request_payout(req: PayoutRequest, request: Request, db: Session = Depends(get_db)):
+    user_id = _get_user_id(request)
     user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
     earnings = db.query(UserEarnings).filter(UserEarnings.user_id == user_id).first()
 
@@ -756,7 +777,9 @@ async def social_login(request: SocialLoginRequest, db: Session = Depends(get_db
 # ─── 💳 WALLET ENDPOINTS ──────────────────────────────────────────────────────
 @app.get("/api/user/wallet", tags=["Wallet"])
 async def get_wallet(request: Request, db: Session = Depends(get_db)):
-    user_id = _get_user_id(request)
+    user_id = _get_user_id_optional(request)
+    if user_id == "anonymous":
+        return {"user_id": "anonymous", "credits": 0, "balance": 0.0, "daily_bonus_granted": False}
     wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
     
     if not wallet:
@@ -842,13 +865,13 @@ async def system_restart():
 # ─── 📋 TASK SERVICE ENDPOINTS ──────────────────────────────────────────────
 
 @app.get("/api/admin/tasks", tags=["Admin"])
-async def get_tasks(db: Session = Depends(get_db)):
+async def get_tasks(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
     """List all system tasks."""
     tasks = db.query(SystemTask).order_by(SystemTask.created_at.desc()).all()
     return tasks
 
 @app.post("/api/admin/tasks", tags=["Admin"])
-async def create_task(payload: TaskCreateRequest, db: Session = Depends(get_db)):
+async def create_task(payload: TaskCreateRequest, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
     """Create a new system task."""
     task = SystemTask(
         title=payload.title,
@@ -862,22 +885,20 @@ async def create_task(payload: TaskCreateRequest, db: Session = Depends(get_db))
     return task
 
 @app.put("/api/admin/tasks/{task_id}", tags=["Admin"])
-async def update_task(task_id: int, payload: dict, db: Session = Depends(get_db)):
+async def update_task(task_id: int, payload: dict, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
     """Update a task's status or details."""
     task = db.query(SystemTask).filter(SystemTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
     for key, value in payload.items():
         if hasattr(task, key):
             setattr(task, key, value)
-    
     db.commit()
     db.refresh(task)
     return task
 
 @app.delete("/api/admin/tasks/{task_id}", tags=["Admin"])
-async def delete_task(task_id: int, db: Session = Depends(get_db)):
+async def delete_task(task_id: int, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
     """Delete a task."""
     task = db.query(SystemTask).filter(SystemTask.id == task_id).first()
     if not task:
@@ -1208,6 +1229,245 @@ async def sync_metadata(db: Session = Depends(get_db), admin: UserAccount = Depe
     # Logic: Find tracks in SQL that are missing in Mongo (if we use Mongo as source of truth for assets)
     # For now, just return success.
     return {"success": True, "message": "Metadata synchronization completed."}
+
+
+# ─── 🖼️ IMAGE GENERATION ─────────────────────────────────────────────────────
+
+class ImageGenerateRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=1000)
+    aspect_ratio: str = Field("1:1", pattern="^(1:1|16:9|9:16|4:3|3:4|21:9)$")
+    style: str | None = Field(None, max_length=100)
+    negative_prompt: str | None = Field(None, max_length=500)
+    provider: str | None = Field("genaudius_v1", max_length=50)
+    num_images: int = Field(1, ge=1, le=4)
+
+    @validator("prompt")
+    def sanitize(cls, v):
+        return v.strip()
+
+@app.post("/api/image/generate", tags=["Image"])
+async def generate_image(
+    payload: ImageGenerateRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Generate images using GenAudius_V1 model on Modal or external providers."""
+    user_id = _get_user_id(request)
+    cost = 5 * payload.num_images
+    _deduct_credits_atomic(db, user_id, cost)
+
+    # Map aspect ratio to pixel dimensions
+    size_map = {
+        "1:1": (1024, 1024), "16:9": (1344, 768), "9:16": (768, 1344),
+        "4:3": (1152, 896),  "3:4": (896, 1152),  "21:9": (1536, 640)
+    }
+    w, h = size_map.get(payload.aspect_ratio, (1024, 1024))
+
+    provider = (payload.provider or "genaudius_v1").lower()
+
+    try:
+        import httpx
+        modal_url = os.getenv("MODAL_API_URL", "").rstrip("/")
+        modal_key = os.getenv("MODAL_API_KEY", "")
+
+        if provider in ("genaudius_v1", "modal", "gau") and modal_url:
+            # Use GenAudius_V1 model on Modal
+            async with httpx.AsyncClient(timeout=120) as client:
+                r = await client.post(
+                    f"{modal_url}/v1/image/generate",
+                    headers={"X-GenAudius-Key": modal_key},
+                    json={
+                        "prompt": payload.prompt,
+                        "negative_prompt": payload.negative_prompt or "",
+                        "width": w, "height": h,
+                        "style": payload.style or "realistic",
+                        "num_images": payload.num_images,
+                        "model": "GenAudius_V1"
+                    }
+                )
+            if r.status_code == 200:
+                data = r.json()
+                log = GenerationLog(user_id=user_id, engine="GENAUDIUS_V1_IMAGE", credits_used=cost, status="complete")
+                db.add(log); db.commit()
+                return {"success": True, "images": data.get("images", []), "engine": "GenAudius_V1", "credits_used": cost}
+            else:
+                logger.warning(f"[IMAGE] Modal returned {r.status_code}: {r.text[:200]}")
+
+        # Fallback: return task for async processing
+        task_id = f"img_{uuid.uuid4().hex[:12]}"
+        log = GenerationLog(user_id=user_id, task_id=task_id, engine="IMAGE_PENDING", credits_used=cost, status="pending")
+        db.add(log); db.commit()
+        return {"success": True, "task_id": task_id, "status": "processing", "engine": provider, "credits_used": cost}
+
+    except Exception as e:
+        # Refund on error
+        wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+        if wallet:
+            wallet.credits += cost
+            db.commit()
+        logger.error(f"[IMAGE] Generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generando imagen: {str(e)}")
+
+
+# ─── 🎬 VIDEO GENERATION ─────────────────────────────────────────────────────
+
+class VideoGenerateRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=1000)
+    duration: int = Field(5, ge=3, le=60)
+    aspect_ratio: str = Field("16:9", pattern="^(16:9|9:16|1:1|4:3)$")
+    motion_style: str | None = Field(None, max_length=100)
+    provider: str | None = Field("genaudius_v1", max_length=50)
+
+    @validator("prompt")
+    def sanitize(cls, v):
+        return v.strip()
+
+@app.post("/api/video/generate", tags=["Video"])
+async def generate_video(
+    payload: VideoGenerateRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Generate video using GenAudius_V1 model on Modal or external providers."""
+    user_id = _get_user_id(request)
+    cost = max(20, payload.duration * 3)
+    _deduct_credits_atomic(db, user_id, cost)
+
+    provider = (payload.provider or "genaudius_v1").lower()
+    task_id = f"vid_{uuid.uuid4().hex[:12]}"
+
+    try:
+        import httpx
+        modal_url = os.getenv("MODAL_API_URL", "").rstrip("/")
+        modal_key = os.getenv("MODAL_API_KEY", "")
+
+        if provider in ("genaudius_v1", "modal", "gau") and modal_url:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(
+                    f"{modal_url}/v1/video/generate",
+                    headers={"X-GenAudius-Key": modal_key},
+                    json={
+                        "prompt": payload.prompt,
+                        "duration": payload.duration,
+                        "aspect_ratio": payload.aspect_ratio,
+                        "motion_style": payload.motion_style or "cinematic",
+                        "task_id": task_id,
+                        "model": "GenAudius_V1"
+                    }
+                )
+            if r.status_code == 200:
+                data = r.json()
+                log = GenerationLog(user_id=user_id, task_id=task_id, engine="GENAUDIUS_V1_VIDEO", credits_used=cost, status="processing")
+                db.add(log); db.commit()
+                return {"success": True, "task_id": data.get("task_id", task_id), "status": "processing", "engine": "GenAudius_V1", "credits_used": cost}
+
+        # Queue as async task
+        log = GenerationLog(user_id=user_id, task_id=task_id, engine="VIDEO_PENDING", credits_used=cost, status="pending")
+        db.add(log); db.commit()
+        return {"success": True, "task_id": task_id, "status": "processing", "engine": provider, "credits_used": cost}
+
+    except Exception as e:
+        wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+        if wallet:
+            wallet.credits += cost
+            db.commit()
+        logger.error(f"[VIDEO] Generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generando video: {str(e)}")
+
+
+# ─── 🎤 VOICE / TTS GENERATION ───────────────────────────────────────────────
+
+class VoiceGenerateRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    gender: str = Field("female", pattern="^(male|female)$")
+    speed: str = Field("normal", pattern="^(slow|normal|fast)$")
+    tone: str | None = Field(None, max_length=100)
+    provider: str | None = Field("elevenlabs", max_length=50)
+    voice_id: str | None = Field(None, max_length=100)
+
+@app.post("/api/voice/generate", tags=["Voice"])
+async def generate_voice(
+    payload: VoiceGenerateRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Generate voice/TTS using ElevenLabs or OpenAI TTS."""
+    user_id = _get_user_id(request)
+    cost = max(3, len(payload.text) // 200)
+    _deduct_credits_atomic(db, user_id, cost)
+
+    provider = (payload.provider or "elevenlabs").lower()
+    task_id = f"tts_{uuid.uuid4().hex[:12]}"
+
+    try:
+        import httpx
+
+        if provider == "elevenlabs":
+            el_key = os.getenv("ELEVENLABS_API_KEY", "")
+            if not el_key:
+                raise HTTPException(status_code=503, detail="ElevenLabs API key no configurada")
+            voice_id = payload.voice_id or ("21m00Tcm4TlvDq8ikWAM" if payload.gender == "female" else "TxGEqnHWrfWFTfGW9XjX")
+            speed_map = {"slow": 0.75, "normal": 1.0, "fast": 1.25}
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                    headers={"xi-api-key": el_key, "Content-Type": "application/json"},
+                    json={"text": payload.text, "model_id": "eleven_multilingual_v2",
+                          "voice_settings": {"stability": 0.5, "similarity_boost": 0.75,
+                                             "speed": speed_map.get(payload.speed, 1.0)}}
+                )
+            if r.status_code == 200:
+                # Save audio to static exports
+                filename = f"tts_{task_id}.mp3"
+                filepath = os.path.join("static", "exports", filename)
+                with open(filepath, "wb") as f:
+                    f.write(r.content)
+                audio_url = f"{os.getenv('MODAL_API_URL', 'http://127.0.0.1:8000')}/static/exports/{filename}"
+                log = GenerationLog(user_id=user_id, task_id=task_id, engine="ELEVENLABS", credits_used=cost, status="complete")
+                db.add(log); db.commit()
+                return {"success": True, "audio_url": audio_url, "task_id": task_id, "engine": "ElevenLabs", "credits_used": cost}
+            else:
+                raise Exception(f"ElevenLabs error {r.status_code}: {r.text[:200]}")
+
+        elif provider in ("openai_tts", "openai"):
+            oai_key = os.getenv("OPENAI_API_KEY", "")
+            if not oai_key:
+                raise HTTPException(status_code=503, detail="OpenAI API key no configurada")
+            voice = "nova" if payload.gender == "female" else "onyx"
+            speed_map = {"slow": 0.75, "normal": 1.0, "fast": 1.25}
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(
+                    "https://api.openai.com/v1/audio/speech",
+                    headers={"Authorization": f"Bearer {oai_key}", "Content-Type": "application/json"},
+                    json={"model": "tts-1-hd", "input": payload.text, "voice": voice,
+                          "speed": speed_map.get(payload.speed, 1.0)}
+                )
+            if r.status_code == 200:
+                filename = f"tts_{task_id}.mp3"
+                filepath = os.path.join("static", "exports", filename)
+                with open(filepath, "wb") as f:
+                    f.write(r.content)
+                audio_url = f"{os.getenv('MODAL_API_URL', 'http://127.0.0.1:8000')}/static/exports/{filename}"
+                log = GenerationLog(user_id=user_id, task_id=task_id, engine="OPENAI_TTS", credits_used=cost, status="complete")
+                db.add(log); db.commit()
+                return {"success": True, "audio_url": audio_url, "task_id": task_id, "engine": "OpenAI TTS", "credits_used": cost}
+            else:
+                raise Exception(f"OpenAI TTS error {r.status_code}")
+
+        # Fallback
+        log = GenerationLog(user_id=user_id, task_id=task_id, engine="TTS_PENDING", credits_used=cost, status="pending")
+        db.add(log); db.commit()
+        return {"success": True, "task_id": task_id, "status": "processing", "engine": provider, "credits_used": cost}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+        if wallet:
+            wallet.credits += cost
+            db.commit()
+        logger.error(f"[VOICE] Generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generando voz: {str(e)}")
 
 
 # ─── 🎵 MUSIC GENERATION ENDPOINTS ───────────────────────────────────────────
@@ -2036,6 +2296,130 @@ async def get_failover_log(limit: int = 50):
         return []
 
 
+# ─── LEGAL DOCUMENTS ────────────────────────────────────────────────────────────
+@app.get("/api/legal/all", tags=["Legal"])
+async def get_all_legal_docs(db: Session = Depends(get_db)):
+    docs = db.query(LegalDocument).filter(LegalDocument.is_active == True).all()
+    return {doc.slug: {"title": doc.title, "version": doc.version} for doc in docs}
+
+@app.get("/api/legal/{slug}", tags=["Legal"])
+async def get_legal_doc(slug: str, db: Session = Depends(get_db)):
+    doc = db.query(LegalDocument).filter(LegalDocument.slug == slug, LegalDocument.is_active == True).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"slug": doc.slug, "title": doc.title, "content": doc.content, "version": doc.version, "updated_at": doc.updated_at.isoformat()}
+
+@app.get("/api/admin/legal", tags=["Admin Legal"])
+async def list_admin_legal_docs(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    docs = db.query(LegalDocument).all()
+    return [{"id": d.id, "slug": d.slug, "title": d.title, "content": d.content, "version": d.version, "is_active": d.is_active, "updated_at": d.updated_at.isoformat()} for d in docs]
+
+class LegalDocUpdate(BaseModel):
+    id: int
+    title: str
+    content: str
+    version: str
+    is_active: bool
+
+@app.post("/api/admin/legal/update", tags=["Admin Legal"])
+async def update_legal_doc(req: LegalDocUpdate, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    doc = db.query(LegalDocument).filter(LegalDocument.id == req.id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.title = req.title
+    doc.content = req.content
+    doc.version = req.version
+    doc.is_active = req.is_active
+    db.commit()
+    return {"success": True}
+
+
+# ─── SYSTEM TASKS ─────────────────────────────────────────────────────────────
+@app.get("/api/admin/tasks", tags=["Admin Tasks"])
+async def list_admin_tasks(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    tasks = db.query(SystemTask).order_by(SystemTask.created_at.desc()).all()
+    return [{"id": t.id, "title": t.title, "description": t.description, "status": t.status, "priority": t.priority, "created_at": t.created_at.isoformat()} for t in tasks]
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    priority: Optional[str] = "medium"
+
+@app.post("/api/admin/tasks", tags=["Admin Tasks"])
+async def create_admin_task(req: TaskCreate, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    task = SystemTask(title=req.title, description=req.description, priority=req.priority, status="pending")
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return {"success": True, "id": task.id}
+
+class TaskUpdate(BaseModel):
+    status: str
+
+@app.post("/api/admin/tasks/{task_id}", tags=["Admin Tasks"])
+async def update_admin_task(task_id: int, req: TaskUpdate, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    task = db.query(SystemTask).filter(SystemTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.status = req.status
+    db.commit()
+    return {"success": True}
+
+@app.delete("/api/admin/tasks/{task_id}", tags=["Admin Tasks"])
+async def delete_admin_task(task_id: int, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    task = db.query(SystemTask).filter(SystemTask.id == task_id).first()
+    if task:
+        db.delete(task)
+        db.commit()
+    return {"success": True}
+
+
+# ─── BLOG & NEWS ──────────────────────────────────────────────────────────────
+@app.get("/api/blog", tags=["Blog"])
+async def get_blog_posts(db: Session = Depends(get_db)):
+    posts = db.query(BlogPost).filter(BlogPost.is_published == True).order_by(BlogPost.id.desc()).all()
+    return [{"id": p.id, "slug": p.slug, "title": p.title, "content": p.content, "category": p.category, "image_url": p.image_url} for p in posts]
+
+@app.get("/api/admin/blog", tags=["Admin Blog"])
+async def get_admin_blog_posts(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    posts = db.query(BlogPost).order_by(BlogPost.id.desc()).all()
+    return [{"id": p.id, "slug": p.slug, "title": p.title, "content": p.content, "category": p.category, "image_url": p.image_url, "is_published": p.is_published} for p in posts]
+
+class BlogPostCreate(BaseModel):
+    title: str
+    content: str
+    category: str
+    image_url: Optional[str] = ""
+
+@app.post("/api/admin/blog", tags=["Admin Blog"])
+async def create_blog_post(req: BlogPostCreate, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    # Simple slug generation
+    slug = req.title.lower().replace(" ", "-")[:50]
+    post = BlogPost(title=req.title, content=req.content, category=req.category, image_url=req.image_url, slug=slug, author_id=admin.user_id)
+    db.add(post)
+    db.commit()
+    return {"success": True}
+
+@app.delete("/api/admin/blog/{post_id}", tags=["Admin Blog"])
+async def delete_blog_post(post_id: int, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    post = db.query(BlogPost).filter(BlogPost.id == post_id).first()
+    if post:
+        db.delete(post)
+        db.commit()
+    return {"success": True}
+
+# ─── SYSTEM ADMIN ENDPOINTS ───────────────────────────────────────────────────
+@app.post("/api/admin/system/repair", tags=["Admin System"])
+async def system_repair_alias(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+    # Alias to the existing repair_db logic
+    return await repair_db(db=db, admin=admin)
+
+@app.post("/api/admin/system/restart", tags=["Admin System"])
+async def system_restart(admin: UserAccount = Depends(_is_admin)):
+    # Dummy restart hook since Uvicorn auto-reloads or docker handles it
+    return {"success": True, "message": "Restart signal sent (if supervised by docker)"}
+
+
 # ─── SaaS API KEY MANAGEMENT (Wholesale) ──────────────────────────────────────
 class APIKeyCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -2095,6 +2479,189 @@ async def revoke_api_key(key_id: int, admin: UserAccount = Depends(_is_admin), d
     key.status = "revoked"
     db.commit()
     return {"success": True, "message": "Key revoked"}
+
+
+# ─── 🤖 CHATGEN — AI Support Assistant ───────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    text: str = Field(..., min_length=1, max_length=2000)
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=1000)
+    history: list[ChatMessage] = Field(default_factory=list, max_items=10)
+
+CHATGEN_SYSTEM = """Eres ChatGEN, el asistente oficial de soporte y ventas de Gen Audius Pro.
+Gen Audius es una plataforma de creación musical con IA (música, imágenes, video, voz y letras).
+
+INFORMACIÓN CLAVE:
+- Free: 100 tokens diarios gratis al registrarse.
+- Pro: $19.99/mes — tokens ilimitados, mastering prioritario, acceso a todos los modelos.
+- Enterprise: Precios personalizados para sellos discográficos. Contactar ventas@genaudius.com.
+- Créditos: $1 USD = 10 créditos si se compran por separado.
+- Generación: Música (Bachata, Reggaetón, Trap, Salsa, etc.), Imágenes, Video, Voz TTS y Letras.
+- Mastering: Algoritmos Neve/SSL para calidad de estudio profesional.
+- Soporte técnico: soporte@genaudius.com
+
+REGLAS:
+- Responde siempre en español, de forma breve y profesional.
+- Tono premium, cálido y directo. Máximo 3 oraciones por respuesta.
+- No inventes precios ni funciones fuera de las listadas.
+- Si no sabes algo, deriva a soporte@genaudius.com.
+"""
+
+def _chatgen_rule_engine(message: str) -> str | None:
+    """Respuestas rápidas basadas en palabras clave — fallback sin LLM."""
+    m = message.lower()
+    if any(w in m for w in ["precio", "plan", "cuánto cuesta", "cuanto cuesta", "costo"]):
+        return "Tenemos 3 planes: Free (100 tokens/día gratis), Pro ($19.99/mes, todo ilimitado) y Enterprise (precios personalizados para sellos). ¿Te ayudo a elegir el tuyo?"
+    if any(w in m for w in ["token", "crédito", "credito", "saldo"]):
+        return "Regalamos 100 tokens diarios a todos los artistas registrados. También puedes comprar créditos a $1 USD por cada 10 créditos."
+    if any(w in m for w in ["gratis", "free", "probar"]):
+        return "¡Sí! Solo regístrate y obtienes 100 tokens diarios gratis para generar música, imágenes y más. Sin tarjeta de crédito."
+    if any(w in m for w in ["funciona", "cómo se usa", "como se usa", "tutorial"]):
+        return "Escribe un prompt describiendo lo que quieres (ej: 'bachata romántica con guitarra') y nuestra IA genera la pista en segundos. También puedes generar imágenes, video y letras."
+    if any(w in m for w in ["mastering", "masterizar", "calidad"]):
+        return "Nuestro motor de mastering usa algoritmos Neve/SSL para calidad de estudio profesional. Disponible en el plan Pro con prioridad máxima."
+    if any(w in m for w in ["soporte", "ayuda", "problema", "error", "falla"]):
+        return "Para soporte técnico escríbenos a soporte@genaudius.com. Respondemos en menos de 24 horas en días hábiles."
+    if any(w in m for w in ["empresa", "sello", "enterprise", "corporativo"]):
+        return "Para planes Enterprise y sellos discográficos, contáctanos en ventas@genaudius.com. Ofrecemos precios personalizados y API dedicada."
+    if any(w in m for w in ["hola", "buenas", "hey", "hi", "hello"]):
+        return "¡Hola! Soy ChatGEN, tu asistente de Gen Audius. Puedo ayudarte con planes, precios, soporte técnico o cualquier duda sobre la plataforma. ¿En qué te ayudo?"
+    return None
+
+@app.post("/api/support/chat", tags=["Support"])
+async def chatgen(payload: ChatRequest):
+    """ChatGEN — AI Support Assistant. Uses OpenAI if available, falls back to rule engine."""
+    user_msg = payload.message.strip()
+
+    # 1. Try OpenAI if key is configured
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if openai_key:
+        try:
+            import httpx
+            messages = [{"role": "system", "content": CHATGEN_SYSTEM}]
+            for h in payload.history[-6:]:  # last 6 turns for context
+                messages.append({"role": h.role, "content": h.text})
+            messages.append({"role": "user", "content": user_msg})
+
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                    json={"model": "gpt-4o-mini", "messages": messages, "max_tokens": 200, "temperature": 0.7}
+                )
+            if r.status_code == 200:
+                reply = r.json()["choices"][0]["message"]["content"].strip()
+                return {"reply": reply, "model": "ChatGEN-GPT"}
+        except Exception as e:
+            logger.warning(f"[CHATGEN] OpenAI failed: {e}")
+
+    # 2. Rule-based fallback (always available)
+    rule_reply = _chatgen_rule_engine(user_msg)
+    if rule_reply:
+        return {"reply": rule_reply, "model": "ChatGEN"}
+
+    # 3. Generic fallback
+    return {
+        "reply": "No estoy seguro de eso, pero nuestro equipo puede ayudarte. Escríbenos a soporte@genaudius.com o cuéntame más sobre tu consulta.",
+        "model": "ChatGEN"
+    }
+
+
+# ─── 👥 ADMIN USER MANAGEMENT ────────────────────────────────────────────────
+
+@app.get("/api/admin/users", tags=["Admin"])
+async def list_users(
+    search: str = "",
+    plan: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    admin: UserAccount = Depends(_is_admin),
+    db: Session = Depends(get_db)
+):
+    """List all users with optional search and plan filter."""
+    q = db.query(UserAccount)
+    if search:
+        q = q.filter(
+            (UserAccount.username.ilike(f"%{search}%")) |
+            (UserAccount.email.ilike(f"%{search}%"))
+        )
+    if plan and plan != "all":
+        q = q.filter(UserAccount.role == plan)
+    users = q.order_by(UserAccount.created_at.desc()).offset(offset).limit(limit).all()
+    result = []
+    for u in users:
+        wallet = db.query(UserWallet).filter(UserWallet.user_id == u.user_id).first()
+        gen_count = db.query(GenerationLog).filter(GenerationLog.user_id == u.user_id).count()
+        result.append({
+            "user_id": u.user_id,
+            "username": u.username,
+            "email": u.email,
+            "role": u.role,
+            "is_active": u.is_active,
+            "credits": wallet.credits if wallet else 0,
+            "generations": gen_count,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+        })
+    return result
+
+
+@app.put("/api/admin/users/{user_id}/suspend", tags=["Admin"])
+async def suspend_user(
+    user_id: str,
+    admin: UserAccount = Depends(_is_admin),
+    db: Session = Depends(get_db)
+):
+    """Toggle user active/suspended status."""
+    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.user_id == admin.user_id:
+        raise HTTPException(status_code=400, detail="Cannot suspend yourself")
+    user.is_active = not user.is_active
+    db.commit()
+    action = "activated" if user.is_active else "suspended"
+    logger.info(f"Admin {admin.email} {action} user {user.email}")
+    return {"success": True, "user_id": user_id, "is_active": user.is_active, "action": action}
+
+
+@app.get("/api/admin/users/{user_id}", tags=["Admin"])
+async def get_user_detail(
+    user_id: str,
+    admin: UserAccount = Depends(_is_admin),
+    db: Session = Depends(get_db)
+):
+    """Get detailed info for a single user."""
+    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+    gen_count = db.query(GenerationLog).filter(GenerationLog.user_id == user_id).count()
+    recent_gens = db.query(GenerationLog).filter(
+        GenerationLog.user_id == user_id
+    ).order_by(GenerationLog.created_at.desc()).limit(5).all()
+    return {
+        "user_id": user.user_id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "is_verified": user.is_verified,
+        "artist_type": user.artist_type,
+        "credits": wallet.credits if wallet else 0,
+        "balance": wallet.balance if wallet else 0.0,
+        "generations": gen_count,
+        "failed_attempts": user.failed_attempts,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "last_login": user.last_login.isoformat() if user.last_login else None,
+        "recent_generations": [
+            {"engine": g.engine, "status": g.status, "credits_used": g.credits_used, "created_at": g.created_at.isoformat() if g.created_at else None}
+            for g in recent_gens
+        ]
+    }
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
