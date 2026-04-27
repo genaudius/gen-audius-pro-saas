@@ -1,0 +1,22 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USER }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/gen-audius-pro-saas/deployment
+            git -C /home/ubuntu/gen-audius-pro-saas pull origin main
+            docker-compose -f aws-docker-compose.yml up -d --build --remove-orphans
+            docker image prune -f
