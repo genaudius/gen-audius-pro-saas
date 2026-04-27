@@ -43,14 +43,28 @@ export default function SupportHub() {
         const data = await res.json();
         setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', text: 'Error de conexión. Inténtalo más tarde.' }]);
+        // Fallback local si el backend falla
+        const fallback = getLocalReply(userMsg);
+        setMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
       }
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Error de conexión. Inténtalo más tarde.' }]);
+      const fallback = getLocalReply(userMsg);
+      setMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
     } finally {
       setLoading(false);
     }
   };
+
+  function getLocalReply(msg) {
+    const m = msg.toLowerCase();
+    if (m.match(/precio|plan|costo|cuánto/)) return "Tenemos 3 planes: Free (100 tokens/día gratis), Pro ($19.99/mes) y Enterprise. ¿Te ayudo a elegir?";
+    if (m.match(/token|crédito|saldo/)) return "Regalamos 100 tokens diarios gratis. También puedes comprar créditos a $1 USD por 10 créditos.";
+    if (m.match(/gratis|free|probar/)) return "¡Sí! Regístrate y obtén 100 tokens diarios gratis. Sin tarjeta de crédito.";
+    if (m.match(/hola|buenas|hey|hi/)) return "¡Hola! Soy ChatGEN. ¿En qué puedo ayudarte hoy?";
+    if (m.match(/soporte|ayuda|error|problema/)) return "Para soporte técnico escríbenos a soporte@genaudius.com. Respondemos en menos de 24h.";
+    if (m.match(/mastering/)) return "Nuestro motor de mastering usa algoritmos Neve/SSL para calidad de estudio profesional. Disponible en el plan Pro.";
+    return "Para más información escríbenos a soporte@genaudius.com o visita genaudius.com.";
+  }
 
   return (
     <div style={{ position: 'fixed', bottom: 25, right: 25, zIndex: 1000 }}>
