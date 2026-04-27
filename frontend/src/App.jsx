@@ -142,7 +142,7 @@ const App = () => {
                         onLoginSuccess={handleLoginSuccess}
                     />
                 ) : (
-                    <StudioLayout currentView={currentView} setCurrentView={navigate}>
+                    <StudioLayout currentView={currentView} setCurrentView={navigate} onLogout={handleLogout}>
                         <AnimatePresence mode="wait">
                             {currentView === 'generate' && (
                                 <motion.div key="generate" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION}>
