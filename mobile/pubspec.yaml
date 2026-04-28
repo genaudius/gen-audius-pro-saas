@@ -1,0 +1,99 @@
+name: gen_audius_pro
+description: Gen Audius Pro — AI Music Production SaaS · iOS & Android
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── Navigation ─────────────────────────────────────────────────────────────
+  go_router: ^14.2.0
+
+  # ── State management (Riverpod — better than Provider, simpler than Bloc)
+  flutter_riverpod: ^2.5.0
+  riverpod_annotation: ^2.3.0
+
+  # ── Network ────────────────────────────────────────────────────────────────
+  dio: ^5.7.0
+  retrofit: ^4.4.0
+
+  # ── Secure storage ─────────────────────────────────────────────────────────
+  flutter_secure_storage: ^9.2.0
+  shared_preferences: ^2.3.0
+
+  # ── Audio ──────────────────────────────────────────────────────────────────
+  just_audio: ^0.9.40
+  audio_waveforms: ^1.2.0
+
+  # ── UI ─────────────────────────────────────────────────────────────────────
+  google_fonts: ^6.2.0
+  cached_network_image: ^3.4.0
+  shimmer: ^3.0.0
+  lottie: ^3.1.0
+  fl_chart: ^0.69.0
+  percent_indicator: ^4.2.3
+
+  # ── Animations ─────────────────────────────────────────────────────────────
+  flutter_animate: ^4.5.0
+
+  # ── Forms & validation ─────────────────────────────────────────────────────
+  reactive_forms: ^17.0.0
+
+  # ── Image ──────────────────────────────────────────────────────────────────
+  image_picker: ^1.1.0
+
+  # ── Utilities ──────────────────────────────────────────────────────────────
+  freezed_annotation: ^2.4.0
+  json_annotation: ^4.9.0
+  equatable: ^2.0.0
+  intl: ^0.19.0
+  timeago: ^3.7.0
+  uuid: ^4.5.0
+  url_launcher: ^6.3.0
+  share_plus: ^10.0.0
+  connectivity_plus: ^6.1.0
+
+  # ── Biometrics (FaceID/TouchID/Fingerprint) ─────────────────────────────────
+  local_auth: ^2.3.0
+
+  # ── Push notifications ─────────────────────────────────────────────────────
+  firebase_core: ^3.6.0
+  firebase_messaging: ^15.1.0
+
+  # ── Analytics ──────────────────────────────────────────────────────────────
+  firebase_analytics: ^11.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.0
+  riverpod_generator: ^2.4.0
+  freezed: ^2.5.0
+  json_serializable: ^6.8.0
+  retrofit_generator: ^9.1.0
+  mocktail: ^1.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/animations/
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700

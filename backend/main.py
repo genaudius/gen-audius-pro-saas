@@ -38,6 +38,9 @@ import stripe
 # ─── Load .env FIRST — before any module that reads env vars ─────────────────
 load_dotenv()
 
+# ─── Centralized Settings (Pydantic) ─────────────────────────────────────────
+from core.config import settings, RedisKeys
+
 from fastapi import FastAPI, HTTPException, Body, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -226,7 +229,7 @@ _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localh
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 # 🎯 CONFIGURACIÓN DE ADMIN
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "genaudius@gmail.com")
+ADMIN_EMAIL = settings.ADMIN_EMAIL
 
 # 🛡️ ANTI-HACKER RATE LIMITER (Burst protection)
 REDIS_URL = os.getenv("REDIS_URL")
@@ -314,7 +317,7 @@ async def security_rate_limiter(request: Request, call_next):
     if redis_client:
         try:
             # Global IP rate limit: 150 req/60s
-            ip_key = f"rate_ip:{client_ip}"
+            ip_key = RedisKeys.rate_ip(client_ip)
             ip_count = redis_client.incr(ip_key)
             if ip_count == 1:
                 redis_client.expire(ip_key, 60)
@@ -324,7 +327,7 @@ async def security_rate_limiter(request: Request, call_next):
 
             # Per-user generation limit: 10 generations/60s
             if is_gen_endpoint and user_id != client_ip:
-                gen_key = f"rate_gen:{user_id}"
+                gen_key = RedisKeys.rate_gen(user_id)
                 gen_count = redis_client.incr(gen_key)
                 if gen_count == 1:
                     redis_client.expire(gen_key, 60)
@@ -334,7 +337,7 @@ async def security_rate_limiter(request: Request, call_next):
 
             # Auth brute force: 10 attempts/300s
             if request.url.path == "/api/auth/login":
-                auth_key = f"rate_auth:{client_ip}"
+                auth_key = RedisKeys.rate_auth(client_ip)
                 auth_count = redis_client.incr(auth_key)
                 if auth_count == 1:
                     redis_client.expire(auth_key, 300)
