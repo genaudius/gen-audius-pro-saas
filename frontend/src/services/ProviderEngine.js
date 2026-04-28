@@ -297,7 +297,7 @@ export async function callCreationAPI(type, prompt, providerState, apiKeys, opti
             const userId = localStorage.getItem('ga_user_id') || '';
             const res = await fetch('/api/backend/api/image/generate', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId },
+              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId, ...(localStorage.getItem('ga_token') ? { 'Authorization': `Bearer ${localStorage.getItem('ga_token')}` } : {}) },
               body: JSON.stringify({
                 prompt,
                 aspect_ratio: options.aspect_ratio || '1:1',
@@ -322,7 +322,7 @@ export async function callCreationAPI(type, prompt, providerState, apiKeys, opti
             const userId = localStorage.getItem('ga_user_id') || '';
             const res = await fetch('/api/backend/api/video/generate', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId },
+              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId, ...(localStorage.getItem('ga_token') ? { 'Authorization': `Bearer ${localStorage.getItem('ga_token')}` } : {}) },
               body: JSON.stringify({
                 prompt,
                 duration: options.duration || 5,
@@ -343,7 +343,7 @@ export async function callCreationAPI(type, prompt, providerState, apiKeys, opti
             const userId = localStorage.getItem('ga_user_id') || '';
             const res = await fetch('/api/backend/api/voice/generate', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId },
+              headers: { 'Content-Type': 'application/json', 'X-User-ID': userId, ...(localStorage.getItem('ga_token') ? { 'Authorization': `Bearer ${localStorage.getItem('ga_token')}` } : {}) },
               body: JSON.stringify({
                 text: prompt,
                 gender: options.gender || 'female',

@@ -74,6 +74,15 @@ import math
 from datetime import timedelta
 from database import SessionLocal, UserWallet, APIConfig, GenerationLog, UserAccount, CreditTransaction, hits_collection, logs_collection, SystemTask, BlogPost, SecurityLog, EmailConfig, SystemSetting, LegalDocument, UserAPIKey
 from database import PublishedTrack, TrackLike, ArtistProfile, CloudResource, TrainingJob, StripeSubscription, StripePayout, UserEarnings
+from core.auth import (
+    hash_password,
+    verify_password,
+    needs_rehash,
+    create_access_token,
+    decode_access_token,
+    get_current_user_id,
+    get_current_user_id_optional,
+)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -392,20 +401,15 @@ def get_db():
 
 
 def _get_user_id(request: Request) -> str:
-    """Extract user ID from header or state (if injected by API Key check)."""
-    if hasattr(request.state, "user_id"):
-        return request.state.user_id
-    uid = request.headers.get("X-User-ID", "")
-    if not uid or uid == "current_user":
-        raise HTTPException(status_code=401, detail="Autenticación requerida. Inicia sesión.")
-    return uid
+    """
+    SECURE: Validates JWT in Authorization: Bearer header.
+    Falls back to X-User-ID only if LEGACY_HEADER_AUTH=true (transition mode).
+    """
+    return get_current_user_id(request)
 
 def _get_user_id_optional(request: Request) -> str:
-    """Extract user ID, returns 'anonymous' if not present (for public/wallet endpoints)."""
-    if hasattr(request.state, "user_id"):
-        return request.state.user_id
-    uid = request.headers.get("X-User-ID", "")
-    return uid if uid and uid != "current_user" else "anonymous"
+    """Returns 'anonymous' if no valid JWT (used for public/wallet endpoints)."""
+    return get_current_user_id_optional(request)
 
 
 async def _is_admin(request: Request, db: Session = Depends(get_db)):
@@ -595,11 +599,15 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
     sig_header = request.headers.get('stripe-signature')
 
+    env_name = os.getenv("ENV", "development").lower()
     if not STRIPE_WEBHOOK_SECRET:
+        if env_name == "production":
+            logger.error("🚨 [STRIPE] Webhook secret missing in production — refusing event")
+            raise HTTPException(status_code=503, detail="Webhook not configured")
         logger.warning("⚠️  [STRIPE] Webhook secret not configured. Skipping verification (DEV ONLY).")
         try:
-            event = request.json()
-        except:
+            event = await request.json()
+        except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON")
     else:
         try:
@@ -651,9 +659,12 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
 # ─── Auth Helper ────────────────────────────────────────────────────────────────
-def _hash_password(password: str, salt: str = "genaudius_salt_2025") -> str:
-    """SHA-256 password hash with salt (matches admin user creation)."""
-    return hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+def _hash_password(password: str, salt: str = None) -> str:
+    """
+    DEPRECATED — kept for backward compatibility with legacy scripts.
+    All new password hashes go through core.auth.hash_password (bcrypt).
+    """
+    return hash_password(password)
 
 
 # ─── 🔐 AUTH ENDPOINTS ──────────────────────────────────────────────────────────
@@ -661,26 +672,36 @@ def _hash_password(password: str, salt: str = "genaudius_salt_2025") -> str:
 async def login(payload: LoginRequest, db: Session = Depends(get_db)):
     """
     Authenticate user with email + password.
-    Returns user_id, plan, credits and a simple session token.
+    Returns user_id, plan, credits and a signed JWT access token.
+    Auto-migrates legacy SHA-256 hashes to bcrypt on successful login.
     """
-    user = db.query(UserAccount).filter(UserAccount.email == payload.email).first()
+    user = db.query(UserAccount).filter(UserAccount.email == payload.email.lower()).first()
+    if not user:
+        # Try case-insensitive lookup
+        user = db.query(UserAccount).filter(func.lower(UserAccount.email) == payload.email.lower()).first()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    expected_hash = _hash_password(payload.password)
-    if user.password_hash != expected_hash:
+    if not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled. Contact support.")
 
+    # Auto-rehash legacy SHA-256 → bcrypt on successful login
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(payload.password)
+        db.commit()
+        logger.info(f"🔄 [AUTH] Password rehashed to bcrypt for {user.email}")
+
     wallet = db.query(UserWallet).filter(UserWallet.user_id == user.user_id).first()
     credits = wallet.credits if wallet else 0
 
-    # Simple session token (stateless). Replace with JWT in production.
-    raw_token = f"{user.user_id}:{secrets.token_hex(16)}"
-    session_token = hashlib.sha256(raw_token.encode()).hexdigest()
+    user.last_login = datetime.utcnow()
+    user.failed_attempts = 0
+    db.commit()
 
+    token = create_access_token(user_id=user.user_id, email=user.email, role=user.role or "user")
     logger.info(f"✅ [AUTH] Login successful for {user.email} (plan: {user.plan})")
 
     return {
@@ -689,15 +710,17 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
         "email": user.email,
         "username": user.username,
         "plan": user.plan,
+        "role": user.role,
         "credits": credits,
-        "token": session_token,
+        "token": token,
+        "token_type": "Bearer",
         "message": f"Welcome back, {user.username}!",
     }
 
 
 @app.get("/api/auth/me", tags=["Auth"])
 async def get_me(request: Request, db: Session = Depends(get_db)):
-    """Get current user profile from X-User-ID header."""
+    """Get current user profile (validates JWT in Authorization: Bearer header)."""
     user_id = _get_user_id(request)
 
     user   = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
@@ -795,6 +818,8 @@ async def social_login(request: SocialLoginRequest, db: Session = Depends(get_db
     db.commit()
     db.refresh(wallet)
 
+    token = create_access_token(user_id=user_id, email=request.email, role=user_role)
+
     return {
         "user_id": user_id,
         "email": request.email,
@@ -802,7 +827,8 @@ async def social_login(request: SocialLoginRequest, db: Session = Depends(get_db
         "plan": "pro" if user_role == "admin" else "free",
         "role": user_role,
         "credits": wallet.credits,
-        "token": f"sk_{secrets.token_hex(16)}"
+        "token": token,
+        "token_type": "Bearer",
     }
 
 
@@ -1128,14 +1154,39 @@ async def update_system_setting(
     return {"success": True, "key": key, "value": value}
 
 @app.get("/api/admin/system/health", tags=["Admin"])
-async def get_system_health(admin: UserAccount = Depends(_is_admin)):
-    # Standard health plus resource checks
-    return {
+async def get_system_health(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
+    """Real-time health check across all backing services."""
+    from database import MONGO_AVAILABLE
+    health = {
         "status": "online",
         "timestamp": datetime.utcnow().isoformat(),
-        "maintenance_mode": "off", # Dynamic in middleware
-        "version": "3.0.1-pro"
+        "version": "3.0.1-pro",
+        "database": "ok",
+        "redis": "ok",
+        "mongodb": "ok" if MONGO_AVAILABLE else "offline",
     }
+
+    # Check SQL DB
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as e:
+        health["database"] = f"error: {str(e)}"
+        health["status"] = "degraded"
+
+    # Check Redis
+    if redis_client:
+        try:
+            redis_client.ping()
+        except Exception as e:
+            health["redis"] = f"error: {str(e)}"
+    else:
+        health["redis"] = "not_configured"
+
+    # Maintenance mode flag
+    setting = db.query(SystemSetting).filter(SystemSetting.key == "maintenance_mode").first()
+    health["maintenance_mode"] = setting.value if setting else "off"
+
+    return health
 
 # ─── ⚖️ LEGAL DOCUMENTS ──────────────────────────────────────────────────────
 @app.get("/api/legal/all", tags=["Legal"])
@@ -1186,34 +1237,6 @@ async def update_legal_doc(
     db.commit()
     logger.info(f"⚖️ [ADMIN] Legal document '{payload.slug}' updated by admin")
     return {"success": True, "message": f"Document {payload.slug} updated"}
-async def get_system_health(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
-    health = {
-        "database": "ok",
-        "redis": "ok",
-        "mongodb": "ok",
-        "uptime": "Calculating...",
-    }
-    
-    # Check SQL DB
-    try:
-        db.execute(text("SELECT 1"))
-    except Exception as e:
-        health["database"] = f"error: {str(e)}"
-
-    # Check Redis
-    if redis_client:
-        try:
-            redis_client.ping()
-        except Exception as e:
-            health["redis"] = f"error: {str(e)}"
-    else:
-        health["redis"] = "not_configured"
-
-    # Check MongoDB
-    from database import MONGO_AVAILABLE
-    health["mongodb"] = "ok" if MONGO_AVAILABLE else "offline"
-    
-    return health
 
 @app.post("/api/admin/system/redis/flush", tags=["Admin"])
 async def flush_redis(admin: UserAccount = Depends(_is_admin)):

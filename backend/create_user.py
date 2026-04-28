@@ -2,6 +2,7 @@ import sys
 import os
 import uuid
 import hashlib
+from core.auth import hash_password as _bcrypt_hash
 from datetime import datetime
 
 # Path to the backend directory to import database.py
@@ -10,8 +11,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from database import SessionLocal, UserAccount, UserWallet, Base, engine
 
 def _hash_password(password: str, salt: str = "genaudius_salt_2025") -> str:
-    """SHA-256 password hash with salt (matches main.py logic)."""
-    return hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+    """Now uses bcrypt; salt arg ignored (kept for backward compat)."""
+    return _bcrypt_hash(password)
 
 def create_specific_user():
     Base.metadata.create_all(bind=engine)

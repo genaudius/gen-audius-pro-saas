@@ -17,8 +17,11 @@ const BACKEND_URL = '/api/backend';
 
 async function apiFetch(path, options = {}) {
     const userId = localStorage.getItem('ga_user_id') || '';
+    const token = localStorage.getItem('ga_token') || '';
+    const baseHeaders = { 'Content-Type': 'application/json', 'X-User-ID': userId };
+    if (token) baseHeaders['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${BACKEND_URL}${path}`, {
-        headers: { 'Content-Type': 'application/json', 'X-User-ID': userId, ...options.headers },
+        headers: { ...baseHeaders, ...options.headers },
         ...options,
     });
     if (!res.ok) {

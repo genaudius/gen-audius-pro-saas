@@ -25,10 +25,18 @@ const DB_VERSION = 3;
 export const getStoredUserId = () =>
     localStorage.getItem('ga_user_id') || 'current_user';
 
-export const getAuthHeaders = () => ({
-    'Content-Type': 'application/json',
-    'X-User-ID': getStoredUserId(),
-});
+export const getStoredToken = () =>
+    localStorage.getItem('ga_token') || '';
+
+export const getAuthHeaders = () => {
+    const token = getStoredToken();
+    const headers = {
+        'Content-Type': 'application/json',
+        'X-User-ID': getStoredUserId(),
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+};
 
 export const clearSession = () => {
     ['ga_user_id', 'ga_plan', 'ga_token', 'ga_username', 'ga_email', 'ga_credits']
@@ -97,7 +105,9 @@ export const DatabaseProvider = ({ children }) => {
             console.log('🔄 [SYNC] Syncing with backend...');
 
             const userId = getStoredUserId();
+            const token = getStoredToken();
             const headers = { 'X-User-ID': userId };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
 
             const [walletRes, configRes, historyRes] = await Promise.allSettled([
                 fetch(`${BACKEND}/api/user/wallet`,   { headers }),
@@ -140,7 +150,7 @@ export const DatabaseProvider = ({ children }) => {
     const syncWalletFromBackend = useCallback(async () => {
         try {
             const res = await fetch(`${BACKEND}/api/user/wallet`, {
-                headers: { 'X-User-ID': getStoredUserId() },
+                headers: getAuthHeaders(),
             });
             if (res.ok) {
                 const wallet = await res.json();

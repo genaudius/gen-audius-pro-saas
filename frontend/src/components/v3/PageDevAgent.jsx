@@ -32,7 +32,8 @@ export default function PageDevAgent() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'X-User-ID': localStorage.getItem('ga_user_id') || 'admin'
+          'X-User-ID': localStorage.getItem('ga_user_id') || 'admin',
+          ...(localStorage.getItem('ga_token') ? { 'Authorization': `Bearer ${localStorage.getItem('ga_token')}` } : {})
         },
         body: JSON.stringify({ prompt, commit: true })
       });

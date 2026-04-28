@@ -75,3 +75,9 @@ htmlcov/
 *.pem
 .vercel
 .netlify
+
+# ─── Databases (NEVER commit — contains user data) ────────────────────────────
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3

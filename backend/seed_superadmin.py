@@ -2,6 +2,7 @@ import sys
 import os
 import uuid
 import hashlib
+from core.auth import hash_password as _bcrypt_hash
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -9,7 +10,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from database import SessionLocal, UserAccount, UserWallet, Base, engine
 
 def _hash_password(password: str, salt: str = "genaudius_salt_2025") -> str:
-    return hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+    # Now uses bcrypt; salt arg ignored (kept for backward compat)
+    return _bcrypt_hash(password)
 
 def seed_superadmin():
     Base.metadata.create_all(bind=engine)
