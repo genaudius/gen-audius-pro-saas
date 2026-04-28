@@ -391,6 +391,17 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-User-ID"],
 )
 
+# ─── Mount Routers ────────────────────────────────────────────────────────────
+from routers.auth import router as auth_router
+from routers.wallet import router as wallet_router
+from routers.content import router as content_router
+from routers.billing import router as billing_router
+
+app.include_router(auth_router)
+app.include_router(wallet_router)
+app.include_router(content_router)
+app.include_router(billing_router)
+
 # ─── DB Dependency ────────────────────────────────────────────────────────────
 def get_db():
     db = SessionLocal()
@@ -497,165 +508,7 @@ def _deduct_credits_atomic(db: Session, user_id: str, amount: int) -> UserWallet
     return wallet
 
 
-# ─── STRIPE ORCHESTRATION ─────────────────────────────────────────────────────
-
-@app.post("/api/stripe/create-checkout-session")
-async def create_checkout_session(req: StripeSessionRequest, request: Request, db: Session = Depends(get_db)):
-    user_id = _get_user_id(request)
-    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    # Map plan to Stripe Price IDs — configure in .env
-    price_map = {
-        "basic":   os.getenv("STRIPE_PRICE_BASIC",   ""),
-        "pro":     os.getenv("STRIPE_PRICE_PRO",     ""),
-        "studio":  os.getenv("STRIPE_PRICE_STUDIO",  ""),
-    }
-    price_id = price_map.get(req.plan_id)
-    if not price_id:
-        raise HTTPException(status_code=400, detail=f"Plan '{req.plan_id}' no válido o sin Price ID configurado")
-
-    try:
-        session = stripe.checkout.Session.create(
-            customer=user.stripe_customer_id if user.stripe_customer_id else None,
-            customer_email=user.email if not user.stripe_customer_id else None,
-            payment_method_types=['card'],
-            line_items=[{'price': price_id, 'quantity': 1}],
-            mode='subscription',
-            success_url=req.success_url,
-            cancel_url=req.cancel_url,
-            metadata={"user_id": user_id, "plan_id": req.plan_id}
-        )
-        return {"url": session.url}
-    except Exception as e:
-        logger.error(f"Error Stripe Session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/user/earnings")
-async def get_user_earnings(request: Request, db: Session = Depends(get_db)):
-    user_id = _get_user_id(request)
-    earnings = db.query(UserEarnings).filter(UserEarnings.user_id == user_id).first()
-    if not earnings:
-        return {"current_balance": 0.0, "total_earned": 0.0, "payouts": []}
-    payouts = db.query(StripePayout).filter(StripePayout.user_id == user_id).order_by(StripePayout.created_at.desc()).all()
-    return {
-        "current_balance": earnings.current_balance,
-        "total_earned": earnings.total_earned,
-        "payouts": payouts
-    }
-
-
-@app.post("/api/user/payout")
-async def request_payout(req: PayoutRequest, request: Request, db: Session = Depends(get_db)):
-    user_id = _get_user_id(request)
-    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-    earnings = db.query(UserEarnings).filter(UserEarnings.user_id == user_id).first()
-
-    if not earnings or earnings.current_balance < req.amount:
-        raise HTTPException(status_code=400, detail="Saldo insuficiente")
-
-    if not user.stripe_connect_id:
-        raise HTTPException(status_code=400, detail="Debes configurar tu cuenta de Stripe Connect para recibir pagos")
-
-    try:
-        # Create Transfer to Connected Account
-        # Stripe keeps the fees if configured, otherwise we deduct manually 20%
-        # Here req.amount is already assuming 80% (platform fee taken into account when adding to current_balance)
-        transfer = stripe.Transfer.create(
-            amount=int(req.amount * 100), # centavos
-            currency=req.currency,
-            destination=user.stripe_connect_id,
-            metadata={"user_id": user_id}
-        )
-
-        # Update balance
-        earnings.current_balance -= req.amount
-        
-        # Log Payout
-        payout = StripePayout(
-            user_id=user_id,
-            stripe_transfer_id=transfer.id,
-            amount=req.amount,
-            status="paid"
-        )
-        db.add(payout)
-        db.commit()
-
-        return {"status": "success", "transfer_id": transfer.id}
-    except Exception as e:
-        logger.error(f"Error Payout: {e}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/stripe/webhook")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """
-    Endpoint for Stripe Webhooks. 
-    URL to configure in Stripe Dashboard: https://studio.genaudius.com/api/stripe/webhook
-    """
-    payload = await request.body()
-    sig_header = request.headers.get('stripe-signature')
-
-    env_name = os.getenv("ENV", "development").lower()
-    if not STRIPE_WEBHOOK_SECRET:
-        if env_name == "production":
-            logger.error("🚨 [STRIPE] Webhook secret missing in production — refusing event")
-            raise HTTPException(status_code=503, detail="Webhook not configured")
-        logger.warning("⚠️  [STRIPE] Webhook secret not configured. Skipping verification (DEV ONLY).")
-        try:
-            event = await request.json()
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON")
-    else:
-        try:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, STRIPE_WEBHOOK_SECRET
-            )
-        except Exception as e:
-            logger.error(f"⚠️  [STRIPE] Webhook verification failed: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
-
-    # ─── Event Handling ───
-    event_type = event['type']
-    data_object = event['data']['object']
-
-    if event_type == 'checkout.session.completed':
-        # User finished payment
-        user_id = data_object.get('metadata', {}).get('user_id')
-        plan_id = data_object.get('metadata', {}).get('plan_id')
-        
-        if user_id and plan_id:
-            user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-            if user:
-                user.subscription_status = "active"
-                user.subscription_id = data_object.get('subscription')
-                user.stripe_customer_id = data_object.get('customer')
-                
-                # Add to StripeSubscription log
-                new_sub = StripeSubscription(
-                    user_id=user_id,
-                    stripe_sub_id=data_object.get('subscription'),
-                    plan_id=plan_id,
-                    status="active",
-                    current_period_end=datetime.utcnow() + timedelta(days=32)
-                )
-                db.add(new_sub)
-                db.commit()
-                logger.info(f"💰 [STRIPE] Sub activated: {user_id} -> {plan_id}")
-
-    elif event_type == 'customer.subscription.deleted':
-        # Sub canceled or expired
-        stripe_sub_id = data_object.get('id')
-        user = db.query(UserAccount).filter(UserAccount.subscription_id == stripe_sub_id).first()
-        if user:
-            user.subscription_status = "inactive"
-            db.commit()
-            logger.info(f"❌ [STRIPE] Sub ended: {user.user_id}")
-
-    return {"status": "received"}
+# ─── STRIPE / Wallet / Earnings now live in routers/billing.py + routers/wallet.py
 
 
 # ─── Auth Helper ────────────────────────────────────────────────────────────────
@@ -667,85 +520,8 @@ def _hash_password(password: str, salt: str = None) -> str:
     return hash_password(password)
 
 
-# ─── 🔐 AUTH ENDPOINTS ──────────────────────────────────────────────────────────
-@app.post("/api/auth/login", tags=["Auth"])
-async def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    """
-    Authenticate user with email + password.
-    Returns user_id, plan, credits and a signed JWT access token.
-    Auto-migrates legacy SHA-256 hashes to bcrypt on successful login.
-    """
-    user = db.query(UserAccount).filter(UserAccount.email == payload.email.lower()).first()
-    if not user:
-        # Try case-insensitive lookup
-        user = db.query(UserAccount).filter(func.lower(UserAccount.email) == payload.email.lower()).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+# ─── 🔐 AUTH ENDPOINTS — moved to routers/auth.py ────────────────────────────
 
-    if not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account is disabled. Contact support.")
-
-    # Auto-rehash legacy SHA-256 → bcrypt on successful login
-    if needs_rehash(user.password_hash):
-        user.password_hash = hash_password(payload.password)
-        db.commit()
-        logger.info(f"🔄 [AUTH] Password rehashed to bcrypt for {user.email}")
-
-    wallet = db.query(UserWallet).filter(UserWallet.user_id == user.user_id).first()
-    credits = wallet.credits if wallet else 0
-
-    user.last_login = datetime.utcnow()
-    user.failed_attempts = 0
-    db.commit()
-
-    token = create_access_token(user_id=user.user_id, email=user.email, role=user.role or "user")
-    logger.info(f"✅ [AUTH] Login successful for {user.email} (plan: {user.plan})")
-
-    return {
-        "success": True,
-        "user_id": user.user_id,
-        "email": user.email,
-        "username": user.username,
-        "plan": user.plan,
-        "role": user.role,
-        "credits": credits,
-        "token": token,
-        "token_type": "Bearer",
-        "message": f"Welcome back, {user.username}!",
-    }
-
-
-@app.get("/api/auth/me", tags=["Auth"])
-async def get_me(request: Request, db: Session = Depends(get_db)):
-    """Get current user profile (validates JWT in Authorization: Bearer header)."""
-    user_id = _get_user_id(request)
-
-    user   = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-    wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-
-    if not user:
-        return {
-            "user_id": user_id,
-            "email": None,
-            "username": user_id,
-            "plan": "free",
-            "credits": wallet.credits if wallet else 0,
-            "is_demo": True,
-        }
-
-    return {
-        "user_id": user.user_id,
-        "email": user.email,
-        "username": user.username,
-        "plan": user.plan,
-        "credits": wallet.credits if wallet else 0,
-        "is_active": user.is_active,
-        "created_at": user.created_at.isoformat() if user.created_at else None,
-        "is_demo": False,
-    }
 
 # ─── Health ───────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
@@ -777,98 +553,10 @@ async def root(db: Session = Depends(get_db)):
     }
 
 
-@app.post("/api/auth/social", tags=["Auth"])
-async def social_login(request: SocialLoginRequest, db: Session = Depends(get_db)):
-    """Handle social login from Firebase and sync/provision user."""
-    user_id = f"fb_{request.uid}"
-    is_admin = request.email.lower() == ADMIN_EMAIL.lower()
-    user_role = "admin" if is_admin else "user"
-
-    # Upsert UserAccount
-    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-    if not user:
-        user = UserAccount(
-            user_id=user_id,
-            username=request.username or request.email.split('@')[0],
-            email=request.email,
-            password_hash="firebase_oauth",
-            role=user_role,
-            is_active=True,
-            is_verified=True,
-        )
-        db.add(user)
-        logger.info(f"🆕 [AUTH] New social user created: {user_id} ({request.email})")
-    else:
-        # Always sync role for admin email
-        if is_admin and user.role != "admin":
-            user.role = "admin"
-
-    # Upsert Wallet
-    wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-    if not wallet:
-        credits = 99999 if is_admin else 100
-        wallet = UserWallet(user_id=user_id, credits=credits, balance=10.0)
-        db.add(wallet)
-        db.add(CreditTransaction(
-            user_id=user_id, amount=credits,
-            type_="welcome_bonus", description="Welcome bonus"
-        ))
-        logger.info(f"💰 [AUTH] Wallet provisioned for {user_id}: {credits} credits")
-
-    db.commit()
-    db.refresh(wallet)
-
-    token = create_access_token(user_id=user_id, email=request.email, role=user_role)
-
-    return {
-        "user_id": user_id,
-        "email": request.email,
-        "username": request.username or request.email.split('@')[0],
-        "plan": "pro" if user_role == "admin" else "free",
-        "role": user_role,
-        "credits": wallet.credits,
-        "token": token,
-        "token_type": "Bearer",
-    }
+# ─── /api/auth/social moved to routers/auth.py ──────────────────────────────
 
 
-# ─── 💳 WALLET ENDPOINTS ──────────────────────────────────────────────────────
-@app.get("/api/user/wallet", tags=["Wallet"])
-async def get_wallet(request: Request, db: Session = Depends(get_db)):
-    user_id = _get_user_id_optional(request)
-    if user_id == "anonymous":
-        return {"user_id": "anonymous", "credits": 0, "balance": 0.0, "daily_bonus_granted": False}
-    wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-    
-    if not wallet:
-        # Auto-provision wallet for new users
-        wallet = UserWallet(user_id=user_id, credits=100, balance=10.0)
-        db.add(wallet)
-        db.commit()
-        db.refresh(wallet)
-    
-    # --- 100 Daily Tokens Logic ---
-    today = datetime.utcnow().date()
-    # We use updated_at to check if it's been updated today. 
-    # For more accuracy, we should have a 'last_daily_bonus' field,
-    # but for now let's use a transaction check if it exists or just update credits if it's a new day relative to updated_at.
-    # Actually, let's just do a simple check: if wallet.updated_at.date() < today:
-    if wallet.updated_at.date() < today:
-        bonus = 100
-        wallet.credits += bonus
-        wallet.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(wallet)
-        logger.info(f"🎁 [WALLET] Daily bonus of {bonus} credits granted to {user_id}")
-    # ------------------------------
-
-    return {
-        "user_id": wallet.user_id,
-        "credits": wallet.credits,
-        "balance": wallet.balance,
-        "updated_at": wallet.updated_at.isoformat() if wallet.updated_at else None,
-        "daily_bonus_granted": True if wallet.updated_at.date() == today else False
-    }
+# ─── 💳 WALLET ENDPOINTS — moved to routers/wallet.py ────────────────────────
 
 # ─── 🛠️ DEV AGENT ENDPOINTS ───────────────────────────────────────────────────
 
@@ -967,11 +655,7 @@ async def delete_task(task_id: int, admin: UserAccount = Depends(_is_admin), db:
 
 
 # ─── 📰 BLOG SERVICE ENDPOINTS ──────────────────────────────────────────────
-
-@app.get("/api/blog", tags=["Blog"])
-async def get_blog_posts(db: Session = Depends(get_db)):
-    """Public blog list."""
-    return db.query(BlogPost).filter(BlogPost.is_published == True).order_by(BlogPost.created_at.desc()).all()
+# Public /api/blog moved to routers/content.py
 
 @app.post("/api/admin/blog", tags=["Admin"])
 async def create_blog_post(payload: BlogCreateRequest, request: Request, db: Session = Depends(get_db)):
@@ -1036,51 +720,7 @@ async def _send_system_email(subject, body, to_email, db: Session):
         logger.error(f"❌ [EMAIL] Failed to send email: {e}")
         return False
 
-@app.get("/api/auth/verify", tags=["Auth"])
-async def verify_account(token: str, db: Session = Depends(get_db)):
-    """Verify email token."""
-    user = db.query(UserAccount).filter(UserAccount.verification_token == token).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="Token inválido o expirado.")
-    
-    user.is_verified = True
-    user.verification_token = None
-    db.commit()
-    return {"success": True, "message": "Cuenta verificada con éxito."}
-
-
-
-@app.post("/api/user/recharge", tags=["Wallet"])
-async def recharge_wallet(
-    payload: RechargeRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    user_id = _get_user_id(request)
-    wallet = (
-        db.query(UserWallet)
-        .filter(UserWallet.user_id == user_id)
-        .with_for_update()
-        .first()
-    )
-    if not wallet:
-        raise HTTPException(status_code=404, detail="Wallet not found")
-
-    credits_to_add = int(payload.amount * 10)  # $1 = 10 credits
-    wallet.balance += payload.amount
-    wallet.credits += credits_to_add
-    wallet.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(wallet)
-
-    logger.info(f"💰 [WALLET] Recharged {credits_to_add} credits for user {user_id}")
-    return {
-        "success": True,
-        "user_id": wallet.user_id,
-        "credits": wallet.credits,
-        "balance": wallet.balance,
-        "credits_added": credits_to_add,
-    }
+# /api/auth/verify and /api/user/recharge moved to routers/auth.py + routers/wallet.py
 
 
 # ─── ⚙️ ADMIN CONFIG ENDPOINTS ────────────────────────────────────────────────
@@ -1189,23 +829,7 @@ async def get_system_health(db: Session = Depends(get_db), admin: UserAccount = 
     return health
 
 # ─── ⚖️ LEGAL DOCUMENTS ──────────────────────────────────────────────────────
-@app.get("/api/legal/all", tags=["Legal"])
-async def get_all_legal_docs(db: Session = Depends(get_db)):
-    docs = db.query(LegalDocument).filter(LegalDocument.is_active == True).all()
-    return {doc.slug: {"title": doc.title, "content": doc.content, "version": doc.version} for doc in docs}
-
-@app.get("/api/legal/{slug}", tags=["Legal"])
-async def get_legal_doc(slug: str, db: Session = Depends(get_db)):
-    doc = db.query(LegalDocument).filter(LegalDocument.slug == slug, LegalDocument.is_active == True).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return {
-        "slug": doc.slug,
-        "title": doc.title,
-        "content": doc.content,
-        "version": doc.version,
-        "updated_at": doc.updated_at
-    }
+# Public /api/legal/* moved to routers/content.py
 
 @app.get("/api/admin/legal", tags=["Admin"])
 async def list_legal_docs(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):

@@ -2,34 +2,47 @@
  * Gen Audius Pro — App Root
  * ==========================
  * Main application shell.
+ * Heavy routes are lazy-loaded for faster initial page load.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     Zap, Menu, X, WifiOff, LogOut, User, 
     ShieldCheck, ChevronLeft, CheckCircle 
 } from 'lucide-react';
 import { CDLoader } from './components/v3/SharedComponents';
-import SuperAdminPanel from './components/SuperAdminPanel';
+
+// ── Eager imports (entry points / critical) ────────────────────────────────
 import LandingPage from './components/LandingPage';
-import PageCreatorV3 from './components/v3/PageCreatorV3';
-import PagePlans from './components/v3/PagePlans';
-import PageCheckout from './components/v3/PageCheckout';
-import PageExplore from './components/v3/PageExplore';
-import PageLibrary from './components/v3/PageLibrary';
-import PageDashboard from './components/v3/PageDashboard';
-import PageAdmin from './components/v3/PageAdmin';
-import PageProfileSettings from './components/v3/PageProfileSettings';
-import PageLegalView from './components/v3/PageLegalView';
-import SupportHub from './components/v3/SupportHub';
 import LoginModal from './components/LoginModal';
+
+// ── Lazy imports (loaded on-demand to shrink initial bundle) ───────────────
+const StudioLayout       = lazy(() => import('./components/StudioLayout'));
+const SuperAdminPanel    = lazy(() => import('./components/SuperAdminPanel'));
+const PageCreatorV3      = lazy(() => import('./components/v3/PageCreatorV3'));
+const PagePlans          = lazy(() => import('./components/v3/PagePlans'));
+const PageCheckout       = lazy(() => import('./components/v3/PageCheckout'));
+const PageExplore        = lazy(() => import('./components/v3/PageExplore'));
+const PageLibrary        = lazy(() => import('./components/v3/PageLibrary'));
+const PageDashboard      = lazy(() => import('./components/v3/PageDashboard'));
+const PageAdmin          = lazy(() => import('./components/v3/PageAdmin'));
+const PageProfileSettings= lazy(() => import('./components/v3/PageProfileSettings'));
+const PageLegalView      = lazy(() => import('./components/v3/PageLegalView'));
+const SupportHub         = lazy(() => import('./components/v3/SupportHub'));
+
 import { useDatabase } from './context/DatabaseContext';
 import { clearSession } from './context/DatabaseContext';
 import { useLang } from './i18n/LanguageContext';
 import { LANGUAGES } from './i18n/translations';
 import { useProviders } from './context/ProviderContext';
-import StudioLayout from './components/StudioLayout';
+
+// Lightweight fallback while a chunk is loading
+const RouteFallback = () => (
+    <div className="min-h-[60vh] flex items-center justify-center" data-testid="route-loading">
+        <CDLoader />
+    </div>
+);
 
 const PAGE_VARIANTS = {
     initial: { opacity: 0, y: 8 },
@@ -135,71 +148,93 @@ const App = () => {
         <ErrorBoundary>
             <div className="App selection:bg-[#F5A623]/30 selection:text-white">
                 {currentView === 'legal_view' ? (
-                    <PageLegalView onBack={() => setCurrentView('home')} />
+                    <Suspense fallback={<RouteFallback />}>
+                        <PageLegalView onBack={() => setCurrentView('home')} />
+                    </Suspense>
                 ) : currentView === 'home' ? (
                     <LandingPage
                         onStartCreating={(view) => navigate(view === 'explore' ? 'explore' : 'generate')}
                         onLoginSuccess={handleLoginSuccess}
                     />
                 ) : (
+                    <Suspense fallback={<RouteFallback />}>
                     <StudioLayout currentView={currentView} setCurrentView={navigate} onLogout={handleLogout}>
                         <AnimatePresence mode="wait">
                             {currentView === 'generate' && (
                                 <motion.div key="generate" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION}>
-                                    <PageCreatorV3 sessionUser={sessionUser} onLoginClick={() => setIsLoginModalOpen(true)} />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PageCreatorV3 sessionUser={sessionUser} onLoginClick={() => setIsLoginModalOpen(true)} />
+                                    </Suspense>
                                 </motion.div>
                             )}
                             {currentView === 'explore' && (
                                 <motion.div key="explore" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION}>
-                                    <PageExplore />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PageExplore />
+                                    </Suspense>
                                 </motion.div>
                             )}
                             {currentView === 'library' && (
                                 <motion.div key="library" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION} className="p-6 md:p-8">
-                                    <PageLibrary />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PageLibrary />
+                                    </Suspense>
                                 </motion.div>
                             )}
                             {currentView === 'dashboard' && (
                                 <motion.div key="dashboard" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION}>
-                                    <PageDashboard liveStats={{ total: 1254, music: 432, images: 204 }} />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PageDashboard liveStats={{ total: 1254, music: 432, images: 204 }} />
+                                    </Suspense>
                                 </motion.div>
                             )}
                             {currentView === 'admin' && (
                                 <motion.div key="admin" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION} className="p-6 md:p-8">
-                                    <PageAdmin providerState={providerState} setProviderState={setProviderState} liveStats={{ total: 1254, music: 432, cost: 12.45 }} />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PageAdmin providerState={providerState} setProviderState={setProviderState} liveStats={{ total: 1254, music: 432, cost: 12.45 }} />
+                                    </Suspense>
                                 </motion.div>
                             )}
                             {currentView === 'profile' && (
                                 <motion.div key="profile" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION}>
-                                    <PageProfileSettings user={sessionUser} />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PageProfileSettings user={sessionUser} />
+                                    </Suspense>
                                 </motion.div>
                             )}
                             {currentView === 'plans' && (
                                 <motion.div key="plans" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION} className="h-full">
-                                    <PagePlans
-                                        sessionUser={sessionUser}
-                                        onBuyPlan={(planData) => navigate('checkout', planData)}
-                                        onLoginClick={(opts) => {
-                                            if (opts?.redirectAfter) setAfterLoginRedirect(opts.redirectAfter);
-                                            setIsLoginModalOpen(true);
-                                        }}
-                                    />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PagePlans
+                                            sessionUser={sessionUser}
+                                            onBuyPlan={(planData) => navigate('checkout', planData)}
+                                            onLoginClick={(opts) => {
+                                                if (opts?.redirectAfter) setAfterLoginRedirect(opts.redirectAfter);
+                                                setIsLoginModalOpen(true);
+                                            }}
+                                        />
+                                    </Suspense>
                                 </motion.div>
                             )}
                             {currentView === 'checkout' && (
                                 <motion.div key="checkout" variants={PAGE_VARIANTS} initial="initial" animate="animate" exit="exit" transition={PAGE_TRANSITION} className="h-full">
-                                    <PageCheckout
-                                        selectedPlan={selectedPlan}
-                                        sessionUser={sessionUser}
-                                        onBack={(dest) => navigate(dest || 'plans')}
-                                    />
+                                    <Suspense fallback={<RouteFallback />}>
+                                        <PageCheckout
+                                            selectedPlan={selectedPlan}
+                                            sessionUser={sessionUser}
+                                            onBack={(dest) => navigate(dest || 'plans')}
+                                        />
+                                    </Suspense>
                                 </motion.div>
                             )}
                         </AnimatePresence>
                     </StudioLayout>
+                    </Suspense>
                 )}
 
-                <SupportHub />
+                <Suspense fallback={null}>
+                    <SupportHub />
+                </Suspense>
 
                 <LoginModal 
                     isOpen={isLoginModalOpen} 

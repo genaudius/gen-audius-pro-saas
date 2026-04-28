@@ -198,6 +198,8 @@ class BlogPost(Base):
     author_id   = Column(String, nullable=False)
     is_published = Column(Boolean, default=True)
     category    = Column(String, default="news") # news | tutorial | update
+    created_at  = Column(DateTime, default=datetime.utcnow)
+    updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class UserAPIKey(Base):
@@ -408,6 +410,8 @@ def _migrate_columns() -> None:
             ("api_configs", "health_score", "INTEGER DEFAULT 100"),
             ("api_configs", "display_name", "VARCHAR DEFAULT ''"),
             ("generation_logs", "result_json", "TEXT"),
+            ("blog_posts", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+            ("blog_posts", "updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
         ]
         with engine.connect() as conn:
             for table_name, col_name, col_def in sqlite_cols:
@@ -427,6 +431,8 @@ def _migrate_columns() -> None:
             "ALTER TABLE api_configs ADD COLUMN IF NOT EXISTS health_score INTEGER DEFAULT 100",
             "ALTER TABLE api_configs ADD COLUMN IF NOT EXISTS display_name VARCHAR DEFAULT ''",
             "ALTER TABLE generation_logs ADD COLUMN IF NOT EXISTS result_json TEXT",
+            "ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         ]
         with engine.connect() as conn:
             for sql in new_cols_pg:
