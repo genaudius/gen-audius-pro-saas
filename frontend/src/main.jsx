@@ -9,6 +9,7 @@ import { WalletProvider } from './context/WalletContext.jsx'
 import { ApiKeysProvider } from './context/ApiKeysContext.jsx'
 import { ProviderProvider } from './context/ProviderContext.jsx'
 import { PlayerProvider } from './context/PlayerContext.jsx'
+import { startIdlePrefetch } from './utils/prefetch.js'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -27,3 +28,6 @@ createRoot(document.getElementById('root')).render(
     </DatabaseProvider>
   </StrictMode>,
 )
+
+// Pre-warm likely-next route chunks during browser idle time
+startIdlePrefetch()

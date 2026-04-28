@@ -40,15 +40,7 @@ React + Vite + Firebase. Despliegue actual: GCP / AWS (ya en producción).
 **Bug latente arreglado**: `BlogPost` no tenía `created_at`/`updated_at` y el endpoint
 `/api/blog` tiraba 500. Añadidas las columnas + migración SQLite/Postgres idempotente.
 
-**Tests E2E** (servidor real en puerto 8765, 21/21 verde):
-- Login auth router + JWT + rehash
-- /me, /verify, wallet (get/recharge/earnings)
-- Content (blog, legal, 404)
-- Billing (Stripe checkout reachable, webhook reachable)
-- Admin routes legacy aún funcionan en main.py
-- OpenAPI: sin rutas duplicadas
-
-### Frontend code-splitting
+### Frontend code-splitting + idle prefetch
 **Antes**: bundle único `index.js` ≈ 591 KB (191 KB gzip).
 **Después**: bundle inicial = **359 KB (113 KB gzip)** — ↓ **39 % reducción**.
 
@@ -62,6 +54,12 @@ Vendor chunks separados via `vite.config.js` `manualChunks`:
 - `vendor-firebase` (97 KB / 29 KB gzip) — solo se carga al abrir LoginModal
 - `vendor-icons` (22 KB / 8 KB gzip) — lucide-react
 - `vendor-idb` (3.4 KB) — IndexedDB wrapper
+
+**Idle prefetch** (`src/utils/prefetch.js`): después de `window.load`, en tiempo idle
+del browser (`requestIdleCallback`), pre-warma secuencialmente los chunks más probables:
+StudioLayout → PageCreatorV3 → PageExplore → PageLibrary → PagePlans. Cuando el
+usuario hace click, la transición se siente instantánea porque los chunks ya están en
+caché. Best-effort: errores de prefetch se ignoran.
 
 **Beneficio extra**: vendor chunks cacheados independientemente. En deploys que solo
 tocan código de la app, el browser no re-descarga react/firebase/motion/etc.
