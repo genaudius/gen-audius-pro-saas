@@ -38,8 +38,23 @@ import stripe
 # ─── Load .env FIRST — before any module that reads env vars ─────────────────
 load_dotenv()
 
-# ─── Centralized Settings (Pydantic) ─────────────────────────────────────────
-from core.config import settings, RedisKeys
+# ─── Centralized Settings (Pydantic) — loaded after dotenv ───────────────────
+try:
+    from core.config import settings, RedisKeys
+    _USE_SETTINGS = True
+except ImportError:
+    # Fallback if pydantic-settings not installed yet
+    _USE_SETTINGS = False
+    class _FallbackSettings:
+        ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "genaudius@gmail.com")
+    settings = _FallbackSettings()
+    class RedisKeys:
+        @staticmethod
+        def rate_ip(ip): return f"rate_ip:{ip}"
+        @staticmethod
+        def rate_gen(uid): return f"rate_gen:{uid}"
+        @staticmethod
+        def rate_auth(ip): return f"rate_auth:{ip}"
 
 from fastapi import FastAPI, HTTPException, Body, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
