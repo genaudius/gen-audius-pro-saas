@@ -77,8 +77,6 @@ tocan código de la app, el browser no re-descarga react/firebase/motion/etc.
 4. (Opcional) Reescribir histórico git con BFG para purgar las DB SQLite filtradas.
 
 ## Backlog (P1 — diferido)
-
-- **Modularizar el resto de `main.py`** (~2 230 líneas restantes): admin, music, image, video, voice, social, providers, support, webhooks
 - **Cifrar `EmailConfig.smtp_pass`** en DB con Fernet
 - **Verificar Firebase ID token** real en `/api/auth/social` con `firebase_admin`
 - **Migrar `datetime.utcnow()`** a `datetime.now(timezone.utc)`
@@ -90,6 +88,58 @@ tocan código de la app, el browser no re-descarga react/firebase/motion/etc.
 - **Background jobs** (Celery/RQ) para generación de música
 - **Política de retención** para `static/exports/*.mp3`
 - **Refresh tokens** (hoy solo access token de 24 h)
+
+---
+
+## Session: MCP Integration (GenAudius MCP @ Hostinger VPS) — Jan 2026
+
+### Architecture wired
+```
+Frontend → Backend FastAPI (AWS / preview) → MCP @ Hostinger VPS → Modal → R2
+```
+
+### Files added
+- `backend/services/mcp_client.py` (101 LOC) — async httpx client wrapping the MCP HTTP API:
+  - `health()`, `list_tools()`, `call_tool(name, args)`, `batch(steps)`
+  - Tolerant JSON parsing (returns `_warning: non_json_response` instead of crashing)
+- `backend/routers/mcp.py` (115 LOC) — public + authenticated + admin endpoints:
+  - `GET /api/mcp/health` (public proxy)
+  - `GET /api/mcp/tools` (admin)
+  - `POST /api/mcp/call/{tool_name}` (authed user, with credit deduction)
+  - `GET /api/admin/mcp/status` (combined dashboard: gateway_health + analytics + chatgau)
+- Per-tool credit costs in `TOOL_CREDIT_COST` dict (e.g. generate_song=20, separate_stems=15, chatgau_quick=0)
+
+### Live integration validated
+- 27 MCP tools listed via `GET /api/mcp/tools`
+- `list_versions`: returned V1/V2/V3 metadata ✅
+- `build_prompt`: deducted 1 credit (100588 → 100587) ✅
+- `gateway_health`, `get_system_status`: ✅
+
+### Bug found in user's VPS Nginx (Option C: not fixed; works via api.genaudius.cloud)
+- `/etc/nginx/conf.d/default.conf` inside container `genaudius_nginx` had a placeholder
+  `location / { return 200 '{" status\:\ok\,\mcp\:\GenAudius\}'; }` shadowing all routes
+  on `genaudius.cloud`. Real MCP only reachable via `api.genaudius.cloud/mcp/*`.
+- Real MCP API key is `mcp_genaudius_2026` (NOT the previous `ga-prod-master-key-2026`).
+- Backend `.env` updated:
+  ```
+  MCP_BASE_URL=https://api.genaudius.cloud/mcp
+  MCP_API_KEY=mcp_genaudius_2026
+  ```
+
+### Action required by user (production AWS .env)
+Add to backend `.env` on AWS:
+```
+MCP_BASE_URL=https://api.genaudius.cloud/mcp
+MCP_API_KEY=mcp_genaudius_2026
+MCP_TIMEOUT_SECONDS=600
+```
+
+### Backlog
+- (Optional) Wire `/api/music/generate` and friends to call MCP `generate_song`
+  instead of direct provider, with fallback chain.
+- Frontend: add "MCP Status" card in Admin Panel that calls `/api/admin/mcp/status`.
+
+
 - **Eliminar deps muertas**: `@react-three/drei`, `@react-three/fiber` no se usan en src
 
 ## Backlog (P2 — nice to have)
