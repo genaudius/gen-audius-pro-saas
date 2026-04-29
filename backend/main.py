@@ -470,27 +470,33 @@ async def _is_admin(request: Request, db: Session = Depends(get_db)):
 async def verify_saas_api_key(request: Request, db: Session = Depends(get_db)):
     """
     Middleware-like dependency to verify SaaS API Keys.
-    Supports both X-API-Key and Authorization: Bearer.
+    Supports X-API-Key. Authorization: Bearer is treated as JWT (not SaaS key)
+    unless it doesn't have JWT shape (3 segments separated by dots).
     """
     api_key = request.headers.get("X-API-Key")
-    auth_header = request.headers.get("Authorization")
-    
-    if not api_key and auth_header and auth_header.startswith("Bearer "):
-        api_key = auth_header.split(" ")[1]
-        
+    auth_header = request.headers.get("Authorization", "")
+
+    if not api_key and auth_header.startswith("Bearer "):
+        candidate = auth_header.split(" ", 1)[1].strip()
+        # JWTs have exactly two dots; SaaS keys typically don't.
+        if candidate and candidate.count(".") != 2:
+            api_key = candidate
+
     if not api_key:
-        return None # No API key, fallback to standard auth headers
-        
-    key_entry = db.query(UserAPIKey).filter(UserAPIKey.key == api_key, UserAPIKey.status == "active").first()
+        return None  # No SaaS API key — caller will use JWT auth
+
+    key_entry = db.query(UserAPIKey).filter(
+        UserAPIKey.key == api_key, UserAPIKey.status == "active"
+    ).first()
     if not key_entry:
         raise HTTPException(status_code=401, detail="Invalid or revoked API Key")
-        
+
     # Update usage stats
     key_entry.total_calls += 1
     key_entry.last_used_at = datetime.utcnow()
     db.commit()
-    
-    # Inject associated user_id into request state for _get_user_id()
+
+    # Inject user_id into request state for _get_user_id()
     request.state.user_id = key_entry.user_id
     return key_entry.user_id
 
