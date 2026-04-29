@@ -322,8 +322,12 @@ async def maintenance_guard(request: Request, call_next):
 
     if is_maintenance:
         # Allow admins regardless
-        user_id = request.headers.get("X-User-ID", "current_user")
-        is_admin_id = user_id in ["admin", "fb_admin", "dev_admin"]
+        is_admin_id = False
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            from core.auth import decode_access_token
+            token_payload = decode_access_token(auth_header[7:].strip())
+            is_admin_id = bool(token_payload and token_payload.get("role") == "admin")
         
         # Check admin path - allow access to admin routes for potential recovery
         if not is_admin_id and not path.startswith("/api/admin"):
@@ -440,31 +444,7 @@ def _get_user_id_optional(request: Request) -> str:
     return get_current_user_id_optional(request)
 
 
-async def _is_admin(request: Request, db: Session = Depends(get_db)):
-    """Verifies user is an admin based on role or ADMIN_EMAIL."""
-    user_id = _get_user_id(request)
-    
-    # Check if user is in DB
-    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-    
-    # 1. Check by role
-    if user and user.role == "admin":
-        return user
-    
-    # 2. Check by email (from DB user or social login email if we had it in token)
-    if user and user.email.lower() == ADMIN_EMAIL.lower():
-        user.role = "admin" # Update role if matches admin email
-        db.commit()
-        return user
-        
-    # 3. Legacy / Demo fallback — REMOVED for security
-    # if user_id in ["admin", "fb_admin", "dev_admin"]:
-    #     return None
-
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Acceso denegado: Se requieren permisos de administrador."
-    )
+from deps import require_admin
 
 
 async def verify_saas_api_key(request: Request, db: Session = Depends(get_db)):
@@ -584,7 +564,7 @@ async def root(db: Session = Depends(get_db)):
 # ─── 🛠️ DEV AGENT ENDPOINTS ───────────────────────────────────────────────────
 
 @app.post("/api/admin/dev/execute", tags=["Admin"])
-async def dev_execute(payload: DevExecuteRequest, request: Request, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def dev_execute(payload: DevExecuteRequest, request: Request, admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """
     AI Development Agent: Analyzes prompt, modifies code, and commits.
     In a real production app, this would call GPT-4/Claude-3.
@@ -634,13 +614,13 @@ async def system_restart():
 # ─── 📋 TASK SERVICE ENDPOINTS ──────────────────────────────────────────────
 
 @app.get("/api/admin/tasks", tags=["Admin"])
-async def get_tasks(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def get_tasks(admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """List all system tasks."""
     tasks = db.query(SystemTask).order_by(SystemTask.created_at.desc()).all()
     return tasks
 
 @app.post("/api/admin/tasks", tags=["Admin"])
-async def create_task(payload: TaskCreateRequest, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def create_task(payload: TaskCreateRequest, admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """Create a new system task."""
     task = SystemTask(
         title=payload.title,
@@ -654,7 +634,7 @@ async def create_task(payload: TaskCreateRequest, admin: UserAccount = Depends(_
     return task
 
 @app.put("/api/admin/tasks/{task_id}", tags=["Admin"])
-async def update_task(task_id: int, payload: dict, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def update_task(task_id: int, payload: dict, admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """Update a task's status or details."""
     task = db.query(SystemTask).filter(SystemTask.id == task_id).first()
     if not task:
@@ -667,7 +647,7 @@ async def update_task(task_id: int, payload: dict, admin: UserAccount = Depends(
     return task
 
 @app.delete("/api/admin/tasks/{task_id}", tags=["Admin"])
-async def delete_task(task_id: int, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def delete_task(task_id: int, admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """Delete a task."""
     task = db.query(SystemTask).filter(SystemTask.id == task_id).first()
     if not task:
@@ -748,7 +728,7 @@ async def _send_system_email(subject, body, to_email, db: Session):
 
 # ─── ⚙️ ADMIN CONFIG ENDPOINTS ────────────────────────────────────────────────
 @app.get("/api/admin/configs", tags=["Admin"])
-async def get_configs(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
+async def get_configs(db: Session = Depends(get_db), admin: UserAccount = Depends(require_admin)):
     configs = db.query(APIConfig).all()
     return [
         {
@@ -766,7 +746,7 @@ async def get_configs(db: Session = Depends(get_db), admin: UserAccount = Depend
 async def update_config(
     payload: ConfigUpdateRequest,
     db: Session = Depends(get_db),
-    admin: UserAccount = Depends(_is_admin)
+    admin: UserAccount = Depends(require_admin)
 ):
     config = db.query(APIConfig).filter(APIConfig.provider == payload.provider).first()
     if not config:
@@ -796,7 +776,7 @@ async def update_config(
 
 # ─── ⚖️ SYSTEM SETTINGS & HEALTH ──────────────────────────────────────────────
 @app.get("/api/admin/system/settings", tags=["Admin"])
-async def get_system_settings(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
+async def get_system_settings(db: Session = Depends(get_db), admin: UserAccount = Depends(require_admin)):
     settings = db.query(SystemSetting).all()
     return {s.key: s.value for s in settings}
 
@@ -805,7 +785,7 @@ async def update_system_setting(
     key: str, 
     value: str, 
     db: Session = Depends(get_db), 
-    admin: UserAccount = Depends(_is_admin)
+    admin: UserAccount = Depends(require_admin)
 ):
     setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
     if not setting:
@@ -817,7 +797,7 @@ async def update_system_setting(
     return {"success": True, "key": key, "value": value}
 
 @app.get("/api/admin/system/health", tags=["Admin"])
-async def get_system_health(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
+async def get_system_health(db: Session = Depends(get_db), admin: UserAccount = Depends(require_admin)):
     """Real-time health check across all backing services."""
     from database import MONGO_AVAILABLE
     health = {
@@ -855,14 +835,14 @@ async def get_system_health(db: Session = Depends(get_db), admin: UserAccount = 
 # Public /api/legal/* moved to routers/content.py
 
 @app.get("/api/admin/legal", tags=["Admin"])
-async def list_legal_docs(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
+async def list_legal_docs(db: Session = Depends(get_db), admin: UserAccount = Depends(require_admin)):
     return db.query(LegalDocument).all()
 
 @app.post("/api/admin/legal/update", tags=["Admin"])
 async def update_legal_doc(
     payload: LegalUpdateRequest, 
     db: Session = Depends(get_db), 
-    admin: UserAccount = Depends(_is_admin)
+    admin: UserAccount = Depends(require_admin)
 ):
     doc = db.query(LegalDocument).filter(LegalDocument.slug == payload.slug).first()
     if not doc:
@@ -886,14 +866,14 @@ async def update_legal_doc(
     return {"success": True, "message": f"Document {payload.slug} updated"}
 
 @app.post("/api/admin/system/redis/flush", tags=["Admin"])
-async def flush_redis(admin: UserAccount = Depends(_is_admin)):
+async def flush_redis(admin: UserAccount = Depends(require_admin)):
     if redis_client:
         redis_client.flushall()
         return {"success": True, "message": "Redis cache cleared"}
     return {"success": False, "message": "Redis not available"}
 
 @app.post("/api/admin/system/db/repair", tags=["Admin"])
-async def repair_db(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
+async def repair_db(db: Session = Depends(get_db), admin: UserAccount = Depends(require_admin)):
     """Re-calculates trending scores and fixes missing artist profiles."""
     try:
         # 1. Fix missing artist profiles
@@ -920,7 +900,7 @@ async def repair_db(db: Session = Depends(get_db), admin: UserAccount = Depends(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/admin/system/db/sync", tags=["Admin"])
-async def sync_metadata(db: Session = Depends(get_db), admin: UserAccount = Depends(_is_admin)):
+async def sync_metadata(db: Session = Depends(get_db), admin: UserAccount = Depends(require_admin)):
     """Synchronizes metadata between SQL and MongoDB history."""
     # In a real app, this would iterate through MongoDB and ensure SQL logs exist, or vice versa.
     # Simulating a sync process.
@@ -2004,7 +1984,7 @@ class APIKeyCreateRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=100)
 
 @app.post("/api/admin/apikeys/generate", tags=["SaaS Admin"])
-async def generate_user_api_key(req: APIKeyCreateRequest, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def generate_user_api_key(req: APIKeyCreateRequest, admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """Generate a new SaaS API Key and ensure the user has a wallet."""
     # 1. Asegurar que el usuario tenga una billetera (Wallet) para poder cobrarle
     existing_wallet = db.query(UserWallet).filter(UserWallet.user_id == req.user_id).first()
@@ -2035,7 +2015,7 @@ async def generate_user_api_key(req: APIKeyCreateRequest, admin: UserAccount = D
     }
 
 @app.get("/api/admin/apikeys", tags=["SaaS Admin"])
-async def list_api_keys(admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def list_api_keys(admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """List all issued SaaS API keys."""
     keys = db.query(UserAPIKey).order_by(UserAPIKey.created_at.desc()).all()
     return [{
@@ -2049,7 +2029,7 @@ async def list_api_keys(admin: UserAccount = Depends(_is_admin), db: Session = D
     } for k in keys]
 
 @app.post("/api/admin/apikeys/{key_id}/revoke", tags=["SaaS Admin"])
-async def revoke_api_key(key_id: int, admin: UserAccount = Depends(_is_admin), db: Session = Depends(get_db)):
+async def revoke_api_key(key_id: int, admin: UserAccount = Depends(require_admin), db: Session = Depends(get_db)):
     """Deactivate a SaaS API key."""
     key = db.query(UserAPIKey).filter(UserAPIKey.id == key_id).first()
     if not key:
@@ -2156,7 +2136,7 @@ async def list_users(
     plan: str = "",
     limit: int = 100,
     offset: int = 0,
-    admin: UserAccount = Depends(_is_admin),
+    admin: UserAccount = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     """List all users with optional search and plan filter."""
@@ -2190,7 +2170,7 @@ async def list_users(
 @app.put("/api/admin/users/{user_id}/suspend", tags=["Admin"])
 async def suspend_user(
     user_id: str,
-    admin: UserAccount = Depends(_is_admin),
+    admin: UserAccount = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     """Toggle user active/suspended status."""
@@ -2209,7 +2189,7 @@ async def suspend_user(
 @app.get("/api/admin/users/{user_id}", tags=["Admin"])
 async def get_user_detail(
     user_id: str,
-    admin: UserAccount = Depends(_is_admin),
+    admin: UserAccount = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     """Get detailed info for a single user."""
@@ -2252,3 +2232,4 @@ if __name__ == "__main__":
         workers=1,
         log_level="info",
     )
+
