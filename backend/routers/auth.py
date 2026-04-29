@@ -4,6 +4,7 @@ Gen Audius Pro — Auth Router
 Endpoints: /api/auth/*
 """
 import os
+import secrets
 import logging
 from datetime import datetime
 
@@ -20,12 +21,92 @@ from core.auth import (
 )
 from deps import get_db, get_user_id
 from schemas import LoginRequest, SocialLoginRequest
+from pydantic import BaseModel, Field, EmailStr, field_validator
 
 logger = logging.getLogger("gen_audius.auth_router")
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "genaudius@gmail.com")
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    username: str | None = Field(None, min_length=2, max_length=64)
+    accepted_terms: bool = True
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if v.strip() != v:
+            raise ValueError("Password no puede empezar/terminar con espacios")
+        if not any(c.isdigit() for c in v) or not any(c.isalpha() for c in v):
+            raise ValueError("Password debe tener al menos una letra y un número")
+        return v
+
+
+@router.post("/register", status_code=201)
+async def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    """Crea una cuenta nueva con email + password.
+    Devuelve JWT y wallet inicial con créditos de bienvenida."""
+    if not payload.accepted_terms:
+        raise HTTPException(status_code=400, detail="Debes aceptar los Términos y Condiciones.")
+
+    email = payload.email.lower().strip()
+    existing = db.query(UserAccount).filter(UserAccount.email == email).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese email.")
+
+    is_admin = email == ADMIN_EMAIL.lower()
+    user_role = "admin" if is_admin else "user"
+
+    user_id = f"u_{secrets.token_hex(8)}"
+    username = (payload.username or email.split("@")[0]).strip()[:64]
+
+    user = UserAccount(
+        user_id=user_id,
+        username=username,
+        email=email,
+        password_hash=hash_password(payload.password),
+        role=user_role,
+        plan="pro" if is_admin else "free",
+        is_active=True,
+        is_verified=False,
+        created_at=datetime.utcnow(),
+        failed_attempts=0,
+    )
+    db.add(user)
+
+    welcome_credits = 99999 if is_admin else 200
+    wallet = UserWallet(user_id=user_id, credits=welcome_credits, balance=10.0)
+    db.add(wallet)
+    db.add(CreditTransaction(
+        user_id=user_id,
+        amount=welcome_credits,
+        type_="welcome_bonus",
+        description="Bono de bienvenida al registrarte",
+    ))
+
+    db.commit()
+    db.refresh(user)
+    db.refresh(wallet)
+
+    token = create_access_token(user_id=user_id, email=email, role=user_role)
+    logger.info(f"🆕 [AUTH] Nuevo registro: {email} ({user_role}, {welcome_credits} créditos)")
+
+    return {
+        "success": True,
+        "user_id": user_id,
+        "email": email,
+        "username": username,
+        "plan": user.plan,
+        "role": user_role,
+        "credits": wallet.credits,
+        "token": token,
+        "token_type": "Bearer",
+        "message": f"¡Bienvenido, {username}! Tienes {welcome_credits} créditos para empezar.",
+    }
 
 
 @router.post("/login")

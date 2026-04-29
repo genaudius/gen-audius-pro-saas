@@ -8,7 +8,7 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Mail, Lock, Loader2, AlertCircle, CheckCircle2, Zap, Chrome } from 'lucide-react';
+import { X, Mail, Lock, User, Loader2, AlertCircle, CheckCircle2, Zap, Chrome } from 'lucide-react';
 import { auth, googleProvider, appleProvider } from '../firebase';
 import { signInWithPopup } from 'firebase/auth';
 import { useLang } from '../i18n/LanguageContext';
@@ -16,14 +16,18 @@ import { useLang } from '../i18n/LanguageContext';
 const API_BASE = '/api/backend';
 
 const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
+    const [mode,     setMode]     = useState('login'); // 'login' | 'register'
     const [email,    setEmail]    = useState('');
     const [password, setPassword] = useState('');
+    const [username, setUsername] = useState('');
     const [loading,  setLoading]  = useState(false);
     const [error,    setError]    = useState('');
     const [success,  setSuccess]  = useState(false);
     const [accepted, setAccepted] = useState(false);
     const [legalLinks, setLegalLinks] = useState({});
     const { t } = useLang();
+
+    const isRegister = mode === 'register';
 
     React.useEffect(() => {
         fetch(`${API_BASE}/api/legal/all`)
@@ -34,9 +38,14 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
             .then(data => setLegalLinks(data))
             .catch(e => {
                 console.error("Legal fetch failed", e);
-                // Set fallback or dummy if needed, currently setLegalLinks({}) is default
             });
     }, []);
+
+    const switchMode = (newMode) => {
+        if (loading) return;
+        setMode(newMode);
+        setError('');
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -48,16 +57,25 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
         setLoading(true);
 
         try {
-            const res = await fetch(`${API_BASE}/api/auth/login`, {
+            const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+            const body = isRegister
+                ? { email: email.trim(), password, username: username.trim() || undefined, accepted_terms: true }
+                : { email: email.trim(), password };
+
+            const res = await fetch(`${API_BASE}${endpoint}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: email.trim(), password }),
+                body: JSON.stringify(body),
             });
 
             const data = await res.json();
 
             if (!res.ok) {
-                setError(data.detail || 'Login failed. Check your credentials.');
+                // Pydantic validation errors come as array
+                const detail = Array.isArray(data.detail)
+                    ? data.detail.map(d => d.msg).join(' · ')
+                    : (data.detail || (isRegister ? 'No se pudo crear la cuenta.' : 'Login failed. Check your credentials.'));
+                setError(detail);
                 setLoading(false);
                 return;
             }
@@ -77,7 +95,7 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
             }, 900);
 
         } catch (err) {
-            setError('Connection error. Make sure the backend is running.');
+            setError('Error de conexión. Verifica que el backend esté corriendo.');
             setLoading(false);
         }
     };
@@ -132,6 +150,8 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
         setSuccess(false);
         setEmail('');
         setPassword('');
+        setUsername('');
+        setMode('login');
         onClose();
     };
 
@@ -191,17 +211,60 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
                                         />
                                         <p className="text-[10px] font-black tracking-[0.3em] uppercase"
                                            style={{ color: 'rgba(255,255,255,0.3)' }}>
-                                            Acceso al Studio Pro
+                                            {isRegister ? 'Crea tu cuenta' : 'Acceso al Studio Pro'}
                                         </p>
                                     </div>
                                     <button
                                         onClick={handleClose}
+                                        data-testid="login-modal-close-btn"
                                         className="p-2 rounded-full transition-all hover:bg-white/5"
                                         style={{ color: 'rgba(255,255,255,0.3)' }}
                                     >
                                         <X size={18} />
                                     </button>
                                 </div>
+
+                                {/* Mode tabs (Login / Register) */}
+                                {!success && (
+                                    <div
+                                        className="flex p-1 rounded-xl mb-6"
+                                        style={{
+                                            background: 'rgba(255,255,255,0.04)',
+                                            border: '1px solid rgba(107,33,212,0.18)',
+                                        }}
+                                    >
+                                        <button
+                                            type="button"
+                                            data-testid="auth-tab-login"
+                                            onClick={() => switchMode('login')}
+                                            className="flex-1 py-2.5 rounded-lg text-[10px] font-black tracking-[0.25em] uppercase transition-all"
+                                            style={{
+                                                background: !isRegister
+                                                    ? 'linear-gradient(135deg, #6B21D4 0%, #E91E8C 100%)'
+                                                    : 'transparent',
+                                                color: !isRegister ? '#fff' : 'rgba(255,255,255,0.45)',
+                                                boxShadow: !isRegister ? '0 2px 12px rgba(107,33,212,0.35)' : 'none',
+                                            }}
+                                        >
+                                            Iniciar Sesión
+                                        </button>
+                                        <button
+                                            type="button"
+                                            data-testid="auth-tab-register"
+                                            onClick={() => switchMode('register')}
+                                            className="flex-1 py-2.5 rounded-lg text-[10px] font-black tracking-[0.25em] uppercase transition-all"
+                                            style={{
+                                                background: isRegister
+                                                    ? 'linear-gradient(135deg, #F5A623 0%, #00C9A7 100%)'
+                                                    : 'transparent',
+                                                color: isRegister ? '#fff' : 'rgba(255,255,255,0.45)',
+                                                boxShadow: isRegister ? '0 2px 12px rgba(245,166,35,0.35)' : 'none',
+                                            }}
+                                        >
+                                            Registro
+                                        </button>
+                                    </div>
+                                )}
 
                                 {/* Success state */}
                                 {success ? (
@@ -214,14 +277,55 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
                                              style={{ background: 'rgba(0,201,167,0.15)', border: '1px solid rgba(0,201,167,0.3)' }}>
                                             <CheckCircle2 size={32} style={{ color: '#00C9A7' }} />
                                         </div>
-                                        <p className="text-white font-black text-lg">¡Bienvenido!</p>
+                                        <p className="text-white font-black text-lg">
+                                            {isRegister ? '¡Cuenta creada!' : '¡Bienvenido!'}
+                                        </p>
                                         <p className="text-[11px] tracking-widest uppercase"
                                            style={{ color: 'rgba(255,255,255,0.4)' }}>
-                                            Entrando al Studio...
+                                            {isRegister ? '200 créditos cargados · Entrando...' : 'Entrando al Studio...'}
                                         </p>
                                     </motion.div>
                                 ) : (
                                     <form onSubmit={handleSubmit} className="space-y-5">
+                                        {/* Username field — only on register */}
+                                        <AnimatePresence initial={false}>
+                                        {isRegister && (
+                                            <motion.div
+                                                initial={{ opacity: 0, height: 0, y: -8 }}
+                                                animate={{ opacity: 1, height: 'auto', y: 0 }}
+                                                exit={{ opacity: 0, height: 0, y: -8 }}
+                                                className="space-y-2 overflow-hidden"
+                                            >
+                                                <label className="text-[10px] font-black tracking-[0.25em] uppercase"
+                                                       style={{ color: 'rgba(255,255,255,0.4)' }}>
+                                                    Usuario
+                                                </label>
+                                                <div className="relative">
+                                                    <User size={14} className="absolute left-4 top-1/2 -translate-y-1/2"
+                                                          style={{ color: 'rgba(0,201,167,0.7)' }} />
+                                                    <input
+                                                        type="text"
+                                                        value={username}
+                                                        data-testid="register-username-input"
+                                                        onChange={e => setUsername(e.target.value)}
+                                                        placeholder="dj_starlight"
+                                                        autoComplete="username"
+                                                        minLength={2}
+                                                        maxLength={64}
+                                                        className="w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium text-white placeholder-white/20 outline-none transition-all"
+                                                        style={{
+                                                            background: 'rgba(255,255,255,0.04)',
+                                                            border: '1px solid rgba(0,201,167,0.2)',
+                                                        }}
+                                                        onFocus={e => e.target.style.borderColor = 'rgba(0,201,167,0.6)'}
+                                                        onBlur={e => e.target.style.borderColor = 'rgba(0,201,167,0.2)'}
+                                                    />
+                                                </div>
+                                                <p className="text-[9px] text-white/25 px-1">Opcional · si lo dejás vacío usamos la parte previa al @ de tu email</p>
+                                            </motion.div>
+                                        )}
+                                        </AnimatePresence>
+
                                         {/* Email field */}
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black tracking-[0.25em] uppercase"
@@ -234,6 +338,7 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
                                                 <input
                                                     type="email"
                                                     value={email}
+                                                    data-testid="auth-email-input"
                                                     onChange={e => setEmail(e.target.value)}
                                                     placeholder="admin@genaudius.com"
                                                     required
@@ -261,10 +366,12 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
                                                 <input
                                                     type="password"
                                                     value={password}
+                                                    data-testid="auth-password-input"
                                                     onChange={e => setPassword(e.target.value)}
-                                                    placeholder="••••••••••••"
+                                                    placeholder={isRegister ? 'Mín. 8 caracteres' : '••••••••••••'}
                                                     required
-                                                    autoComplete="current-password"
+                                                    minLength={isRegister ? 8 : undefined}
+                                                    autoComplete={isRegister ? 'new-password' : 'current-password'}
                                                     className="w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium text-white placeholder-white/20 outline-none transition-all"
                                                     style={{
                                                         background: 'rgba(255,255,255,0.04)',
@@ -320,27 +427,32 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
                                         <motion.button
                                             type="submit"
                                             disabled={loading}
+                                            data-testid="auth-submit-btn"
                                             whileHover={{ scale: loading ? 1 : 1.02 }}
                                             whileTap={{ scale: loading ? 1 : 0.98 }}
                                             className="w-full py-3.5 rounded-xl font-black text-[11px] tracking-[0.3em] uppercase transition-all flex items-center justify-center gap-2"
                                             style={{
                                                 background: loading
                                                     ? 'rgba(107,33,212,0.3)'
-                                                    : 'linear-gradient(135deg, #6B21D4 0%, #E91E8C 100%)',
+                                                    : (isRegister
+                                                        ? 'linear-gradient(135deg, #F5A623 0%, #00C9A7 100%)'
+                                                        : 'linear-gradient(135deg, #6B21D4 0%, #E91E8C 100%)'),
                                                 color: loading ? 'rgba(255,255,255,0.4)' : '#fff',
-                                                boxShadow: loading ? 'none' : '0 4px 24px rgba(107,33,212,0.35)',
+                                                boxShadow: loading ? 'none' : (isRegister
+                                                    ? '0 4px 24px rgba(245,166,35,0.35)'
+                                                    : '0 4px 24px rgba(107,33,212,0.35)'),
                                                 cursor: loading ? 'not-allowed' : 'pointer',
                                             }}
                                         >
                                             {loading ? (
                                                 <>
                                                     <Loader2 size={14} className="animate-spin" />
-                                                    Autenticando...
+                                                    {isRegister ? 'Creando cuenta...' : 'Autenticando...'}
                                                 </>
                                             ) : (
                                                 <>
                                                     <Zap size={14} />
-                                                    Entrar al Studio
+                                                    {isRegister ? 'Crear cuenta' : 'Entrar al Studio'}
                                                 </>
                                             )}
                                         </motion.button>
