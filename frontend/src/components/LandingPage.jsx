@@ -240,9 +240,11 @@ const LandingPage = ({ onStartCreating, onLoginSuccess }) => {
     };
 
     const handleLoginSuccess = (userData) => {
-        if (onLoginSuccess) onLoginSuccess(userData);
+        // App.handleLoginSuccess already handles sessionUser + navigation.
+        // We only show the brief simulation animation here.
         setIsSimulating(true);
-        setTimeout(() => { setIsSimulating(false); onStartCreating(); }, 600);
+        setTimeout(() => setIsSimulating(false), 500);
+        if (onLoginSuccess) onLoginSuccess(userData);
     };
 
     const scrollTo = (id) => {
