@@ -21,7 +21,7 @@ from core.auth import (
 )
 from deps import get_db, get_user_id
 from schemas import LoginRequest, SocialLoginRequest
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, validator
 
 logger = logging.getLogger("gen_audius.auth_router")
 
@@ -36,7 +36,7 @@ class RegisterRequest(BaseModel):
     username: str | None = Field(None, min_length=2, max_length=64)
     accepted_terms: bool = True
 
-    @field_validator("password")
+    @validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
         if v.strip() != v:
