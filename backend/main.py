@@ -410,11 +410,14 @@ from routers.auth import router as auth_router
 from routers.wallet import router as wallet_router
 from routers.content import router as content_router
 from routers.billing import router as billing_router
+from routers.mcp import router as mcp_router, admin_router as mcp_admin_router
 
 app.include_router(auth_router)
 app.include_router(wallet_router)
 app.include_router(content_router)
 app.include_router(billing_router)
+app.include_router(mcp_router)
+app.include_router(mcp_admin_router)
 
 # ─── DB Dependency ────────────────────────────────────────────────────────────
 def get_db():
