@@ -268,6 +268,20 @@ if REDIS_URL:
 
 request_history = {} 
 
+# ─── /api/backend prefix stripper ─────────────────────────────────────────────
+# Frontend code has many hardcoded references like fetch('/api/backend/api/foo').
+# In dev (Vite), the vite proxy strips '/api/backend'. In preview/prod-like envs
+# without that proxy (e.g., behind k8s ingress), we strip it server-side.
+@app.middleware("http")
+async def strip_legacy_prefix(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/backend/"):
+        new_path = path[len("/api/backend"):]  # leaves "/api/..."
+        request.scope["path"] = new_path
+        request.scope["raw_path"] = new_path.encode()
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def maintenance_guard(request: Request, call_next):
     # 🏁 Bypass CORS preflight

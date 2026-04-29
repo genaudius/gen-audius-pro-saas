@@ -12,10 +12,29 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const googleProvider = new GoogleAuthProvider();
-export const appleProvider = new OAuthProvider('apple.com');
+// Graceful degrade: if Firebase env vars are missing (local/preview),
+// export safe stubs so the app keeps booting. Social login will be disabled.
+const FIREBASE_ENABLED = !!firebaseConfig.apiKey;
 
+let app = null;
+let auth = null;
+let db = null;
+let googleProvider = null;
+let appleProvider = null;
+
+if (FIREBASE_ENABLED) {
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    googleProvider = new GoogleAuthProvider();
+    appleProvider = new OAuthProvider('apple.com');
+  } catch (e) {
+    console.warn('[Firebase] Init failed, social login disabled:', e?.message);
+  }
+} else {
+  console.info('[Firebase] No VITE_FIREBASE_API_KEY — social login disabled in this env.');
+}
+
+export { auth, db, googleProvider, appleProvider, FIREBASE_ENABLED };
 export default app;

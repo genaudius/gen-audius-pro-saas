@@ -24,8 +24,8 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 5173,
-    allowedHosts: ['00fwp.app.super.myninja.ai', '00iow.app.super.myninja.ai', '.super.myninja.ai', 'localhost'],
+    port: 3000,
+    allowedHosts: ['00fwp.app.super.myninja.ai', '00iow.app.super.myninja.ai', '.super.myninja.ai', '.preview.emergentagent.com', '.preview.emergentcf.cloud', 'localhost'],
     strictPort: true,
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
@@ -43,7 +43,7 @@ export default defineConfig({
         secure: true,
       },
       '/api/backend': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:8001',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/backend/, ''),
         secure: false,
@@ -52,8 +52,8 @@ export default defineConfig({
   },
   preview: {
     host: '0.0.0.0',
-    port: 5173,
-    allowedHosts: ['00fwp.app.super.myninja.ai', '00iow.app.super.myninja.ai', '.super.myninja.ai', 'localhost'],
+    port: 3000,
+    allowedHosts: ['00fwp.app.super.myninja.ai', '00iow.app.super.myninja.ai', '.super.myninja.ai', '.preview.emergentagent.com', '.preview.emergentcf.cloud', 'localhost'],
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",

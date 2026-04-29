@@ -83,6 +83,10 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
     };
 
     const handleSocialLogin = async (provider) => {
+        if (!auth || !provider) {
+            setError('Social login no está habilitado en este entorno.');
+            return;
+        }
         if (!accepted) {
             setError(t('legal.acceptTerms'));
             return;
