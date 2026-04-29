@@ -130,8 +130,12 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
             
             localStorage.setItem('ga_user_id',  data.user_id || user.uid);
             localStorage.setItem('ga_plan',     data.plan || 'free');
+            localStorage.setItem('ga_token',    data.token);
             localStorage.setItem('ga_username', data.username || user.displayName);
             localStorage.setItem('ga_email',    user.email);
+            if (data.credits !== undefined) {
+                localStorage.setItem('ga_credits', data.credits);
+            }
             
             setSuccess(true);
             setTimeout(() => {
