@@ -80,4 +80,12 @@ htmlcov/
 *.db
 *.db-journal
 *.sqlite
-*.sqlite3
+*.sqlite3-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
